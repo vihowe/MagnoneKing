@@ -21,7 +21,7 @@ else:
         FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
 from matplotlib.figure import Figure
 
-from src.model import node
+from src.model import component
 
 
 class MagnoneUi(QtWidgets.QMainWindow):

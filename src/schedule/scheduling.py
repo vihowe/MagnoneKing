@@ -1,51 +1,20 @@
 import collections
+import queue
+import threading
 import time
-from enum import Enum
+import multiprocessing
+import random
 
-from typing import Tuple
+from typing import Tuple, Dict
 
-from src.model import node
-
-
-class Request(object):
-    """magnetic detection request"""
-
-    def __init__(self, r_id, t_arri: float, t_slo: float, t_end=-1):
-        self._r_id = r_id
-        self._t_arri = t_arri
-        self._t_slo = t_slo
-        self._t_end = t_end
-
-    @property
-    def r_id(self):
-        return self._r_id
-
-    @property
-    def t_slo(self):
-        return self._t_slo
-
-    @t_slo.setter
-    def t_slo(self, value):
-        self._t_slo = value
-
-    @property
-    def t_arri(self):
-        return self._t_arri
-
-    @property
-    def t_end(self):
-        return self._t_end
-
-    @t_end.setter
-    def t_end(self, value):
-        self._t_end = value
+from src.model.component import CpuGen, Node, ModelIns, Request
 
 
 class Cluster(object):
     def __init__(self):
         self._nodes = []
 
-    def add_node(self, c_node: node.Node):
+    def add_node(self, c_node: Node):
         self._nodes.append(c_node)
 
     @property
@@ -53,28 +22,34 @@ class Cluster(object):
         return self._nodes
 
 
-class Controller(object):
+class Controller(multiprocessing.Process):
     """The controller for load balancing and auto scaling
 
     Attributes:
         _cluster: the cluster that the controller is in charge
         _g_queue: the queue for storing all user queries
         _model_insts: the current model instances in the cluster
-        _slo: the service level objective
+        _slo: the general service level objective. The query with high
+            priority may have more stringent slo.
+        comm_pipe: the pipe for communicating with user agent
     """
 
-    def __init__(self, cluster: Cluster, slo: float = 3000):
+    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, slo: float = 3000):
+
+        super().__init__()
         self._cluster = cluster
-        self._g_queue = collections.deque()
+        self._g_queue = multiprocessing.Queue()
         self._model_insts = []
         self._slo = slo
         self._threshold = 0.9
+        self.recv_pipe = recv_pipe  # receiving msg from user agent
+        self.send_pipe_dic = {}  # send request to appropriate model instance
 
     @property
     def slo(self):
         return self._slo
 
-    def find_model_inst(self) -> node.ModelIns or None:
+    def find_model_inst(self) -> ModelIns or None:
         """find the model instance which owns the lowest relative load
             return None if all the instances' relative load exceed the threshold
         """
@@ -85,7 +60,7 @@ class Controller(object):
         else:
             return self._model_insts[min_r]
 
-    def find_light_node(self) -> node.Node:
+    def find_light_node(self) -> Node:
         """find an node which owns the greatest amount of resource"""
 
         for c_node in self._cluster.nodes:
@@ -96,14 +71,14 @@ class Controller(object):
                   + c_node.free_mem for c_node in self._cluster.nodes]
         return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
-    def find_resource(self, c_node: node.Node) -> Tuple[int, int, float]:
+    def find_resource(self, c_node: Node) -> Tuple[int, int, float]:
         """return the just enough resource when model is deployed on `c_node`
         and the model instance's capability. (processing time per query)
         """
         # TODO find the just enough resource allocated to this model instance
         return 1, 100, 1.
 
-    def deploy_model_inst(self) -> node.ModelIns:
+    def deploy_model_inst(self) -> ModelIns:
         """deploy a new model instance in an appropriate node and allocate
         just enough resource to it
         """
@@ -113,30 +88,125 @@ class Controller(object):
         c_node.free_mem -= mem
         c_node.activated = True
 
-        model_inst = node.ModelIns(c_node, cores=cores, mem=mem, capability=cap)
+        parent, child = multiprocessing.Pipe()
+        model_inst = ModelIns(c_node, cores=cores, mem=mem, capability=cap, recv_pipe=child)
+        self.send_pipe_dic[model_inst] = parent
         self._model_insts.append(model_inst)
         return model_inst
 
-    def dispatch(self):
+    def dispatch(self, req: Request):
         """dispatch the user's query in the global queue to an appropriate
-        model instance
+        model instance, do autoscaling simultaneously
         """
-        req = self._g_queue.pop()
         a_model_inst = self.find_model_inst()
-        if a_model_inst is None:    # all the model instances are under peak load
+        if a_model_inst is None:  # all the model instances are under peak load
             a_model_inst = self.deploy_model_inst()
         a_model_inst.requeue.append(req)
-        # TODO send the req to the model instance's query queue
 
-    def monitoring(self, timeout, interval):  # TODO this should be multiprocessing
+    def monitoring(self, timeout=60, interval=60):
         """keep a lookout over all model instances, and clean model
-        instance which is idle for a while"""
-        model_inst: node.ModelIns
-        for model_inst in self._model_insts:
-            if time.time() - model_inst.t_last > timeout:
-                # free resource
-                p_node = model_inst.p_node
-                p_node.free_cores += model_inst.cores
-                p_node.free_mem += model_inst.mem
-                self._model_insts.remove(model_inst)
-        time.sleep(interval)
+        instance which is idle for a while
+
+        Args:
+            timeout: to kill the model instance if its idle time is too long (s).
+            interval: the interval (s).
+        """
+        model_inst: ModelIns
+        while True:
+            for model_inst in self._model_insts:
+                if time.time() - model_inst.t_last > timeout:
+                    # free resource
+                    p_node = model_inst.p_node
+                    p_node.free_cores += model_inst.cores
+                    p_node.free_mem += model_inst.mem
+                    # send signal to model instance for exiting
+                    model_inst.requeue.put(-1)
+                    self._model_insts.remove(model_inst)
+            time.sleep(interval)
+
+    def run(self) -> None:
+        # Once the controller starts, it deploys one model instance in the cluster
+        self.deploy_model_inst()
+        # start the monitor thread
+        monitor = threading.Thread(target=self.monitoring, args=(60, 30))
+        monitor.start()
+
+        # start dispatching user queries
+        while True:
+            req = self._g_queue.get()
+            if isinstance(req, Request):
+                self.dispatch(req)
+            else:
+                break
+
+
+class UserAgent(object):
+    """User agent is responsible for sending queries to the controller
+
+    Args:
+        cluster: the cluster that processing queries
+        _config: some running specification
+    """
+
+    def __init__(self, cluster: Cluster, config: Dict = None):
+        self.cluster = cluster
+        self._config = config
+
+    def start_up(self):
+        parent, child = multiprocessing.Pipe()
+        self.send_pipe = parent
+        controller = Controller(cluster=self.cluster, recv_pipe=child,
+                                slo=self._config['slo'])
+        controller.start()
+
+    def querying(self, load, tatol_queries=10000):
+        """sending query request to the controller
+
+        Args:
+            load: the simulated query load (qps)
+        """
+        r_id = 0
+        while True:
+            if r_id == 10000:
+                break
+            req = Request(r_id, time.time(), 3)
+            r_id += 1
+            self.send_pipe.send(req)
+            time.sleep(random.expovariate(load))
+
+
+def main():
+    # cluster initialization
+    cluster = Cluster()
+
+    node_specification = {
+        "desktop": (12, 8192, CpuGen.D,),
+        "laptop": (10, 4096, CpuGen.C,),
+        "phone": (8, 2048, CpuGen.B,),
+        "pi": (4, 2048, CpuGen.A,),
+    }
+    for v in node_specification.values():
+        for _ in range(5):
+            cluster.add_node(Node(*v))
+
+    config = {
+        'slo': 3000,
+    }
+    user_agent = UserAgent(cluster, config)
+    user_agent.querying()
+
+
+def test():
+    pqueue = queue.PriorityQueue()
+    for i in range(10):
+        req = Request(i, time.time(), random.randint(1, 10))
+        time.sleep(random.randint(1, 5))
+        pqueue.put(req)
+    pqueue.put(-1)
+
+    for _ in range(pqueue.qsize()):
+        print(pqueue.get())
+
+
+if __name__ == '__main__':
+    test()

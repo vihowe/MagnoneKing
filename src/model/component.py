@@ -1,7 +1,61 @@
 import multiprocessing
-import typing
+import queue
 from enum import Enum
 import time
+
+
+class Request(object):
+    """magnetic detection request"""
+
+    def __init__(self, r_id, t_arri: float, t_slo: float, t_end=-1):
+        self._r_id = r_id
+        self._t_arri = t_arri
+        self._t_slo = t_slo
+        self._t_end = t_end
+
+    @property
+    def r_id(self):
+        return self._r_id
+
+    @property
+    def t_slo(self):
+        return self._t_slo
+
+    @t_slo.setter
+    def t_slo(self, value):
+        self._t_slo = value
+
+    @property
+    def t_arri(self):
+        return self._t_arri
+
+    @property
+    def t_end(self):
+        return self._t_end
+
+    @t_end.setter
+    def t_end(self, value):
+        self._t_end = value
+
+    def __lt__(self, other):
+        if isinstance(other, Request):
+            return self._t_arri + self._t_slo < other._t_arri + other._t_slo
+        else:
+            return True     # signal STOP should be the last one in the priority queue
+
+    # def __le__(self, other):
+    #     if isinstance(other, Request):
+    #         return self._t_arri + self._t_slo <= other._t_arri + other._t_slo
+    #     else:
+    #         return True
+
+    def __repr__(self):
+        return f'Request(id={self._r_id}, t_arri={self._t_arri}), ' \
+               f't_slo={self._t_slo}, t_end={self.t_end}'
+
+    def __str__(self):
+        return f'({self._r_id}, {self._t_arri}, {self._t_slo}, ' \
+               f'{self._t_end})'
 
 
 class CpuGen(Enum):
@@ -22,7 +76,8 @@ class Node(object):
         _activated: A boolean indicating whether this node is scheduled
     """
 
-    def __init__(self, cores: int = 1, mem: int = 1000, core_gen: CpuGen = CpuGen.A, activated: bool = False):
+    def __init__(self, cores: int = 1, mem: int = 1000, core_gen: CpuGen = CpuGen.A,
+                 activated: bool = False):
         """None initializer"""
         self._cores = cores
         self._mem = mem
@@ -71,7 +126,7 @@ class Node(object):
         self._free_mem = value
 
 
-class ModelIns(object):
+class ModelIns(multiprocessing.Process):
     """A deployed model instance
 
     Attributes:
@@ -83,11 +138,15 @@ class ModelIns(object):
         _mem: the size of memory possessed by the model instance
         _capability: the instance's capability to process one query
             processing time per query
+        recv_pipe: the pipe for receiving request from the controller
         _t_last: the time stamp when it process one query last time
+        _pri_queue: the priority queue for EDL scheduling
     """
 
-    def __init__(self, p_node: Node, cores: int, mem: int, capability: float, is_replica: bool = False):
+    def __init__(self, p_node: Node, cores: int, mem: int, capability: float, recv_pipe: multiprocessing.Pipe,
+                 is_replica: bool = False):
         """Model instance initialize"""
+        super().__init__()
         self._p_node = p_node
         self._is_replica = is_replica
         self._requeue = multiprocessing.Queue()
@@ -95,6 +154,8 @@ class ModelIns(object):
         self._mem = mem
         self._capability = capability
         self._t_last = time.time()
+        self.recv_pipe = recv_pipe
+        self._pri_queue = queue.PriorityQueue()
 
     @property
     def p_node(self):
@@ -124,8 +185,21 @@ class ModelIns(object):
     def t_last(self):
         return self._t_last
 
-    def process(self):  # TODO model instance process should be multiprocessing
-        self._requeue.get()
-        time.sleep(self._capability)
-        self._t_last = time.time()
+    def run(self):
+        # TODO using EDF strategy to schedule reqs in local queue and do processing
+        while True:
+            q_size = self._requeue.qsize()
+            # get all queries from queue and sort them by end line
+            for _ in range(q_size):
+                req = self._requeue.get()
+                self._pri_queue.put(req)
+            if not self._pri_queue.empty():
+                req = self._pri_queue.get()
+            else:
+                continue
 
+            if isinstance(req, Request):
+                time.sleep(self._capability)
+                self._t_last = time.time()
+            elif req == -1:
+                break

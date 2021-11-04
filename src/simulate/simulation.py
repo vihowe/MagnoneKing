@@ -3,7 +3,7 @@ import random
 import numpy as np
 import collections
 import time
-from src.model import node
+from src.model import component
 import networkx as nx
 import matplotlib
 from matplotlib import pyplot as plt
