@@ -41,7 +41,7 @@ class Request(object):
         if isinstance(other, Request):
             return self._t_arri + self._t_slo < other._t_arri + other._t_slo
         else:
-            return True     # signal STOP should be the last one in the priority queue
+            return True  # signal STOP should be the last one in the priority queue
 
     # def __le__(self, other):
     #     if isinstance(other, Request):
@@ -76,9 +76,10 @@ class Node(object):
         _activated: A boolean indicating whether this node is scheduled
     """
 
-    def __init__(self, cores: int = 1, mem: int = 1000, core_gen: CpuGen = CpuGen.A,
+    def __init__(self, node_id=1, cores: int = 1, mem: int = 1000, core_gen: CpuGen = CpuGen.A,
                  activated: bool = False):
         """None initializer"""
+        self.node_id = node_id
         self._cores = cores
         self._mem = mem
         self._free_cores = cores
@@ -141,8 +142,9 @@ class ModelIns(multiprocessing.Process):
         recv_pipe: the pipe for receiving request from the controller
         _t_last: the time stamp when it process one query last time
         _pri_queue: the priority queue for EDL scheduling
+        req_num: the number of served queries
+        avg_latency: the average latency
     """
-
     def __init__(self, p_node: Node, cores: int, mem: int, capability: float, recv_pipe: multiprocessing.Pipe,
                  is_replica: bool = False):
         """Model instance initialize"""
@@ -156,6 +158,8 @@ class ModelIns(multiprocessing.Process):
         self._t_last = time.time()
         self.recv_pipe = recv_pipe
         self._pri_queue = queue.PriorityQueue()
+        self.req_num = 0
+        self.avg_latency = 0
 
     @property
     def p_node(self):
@@ -198,8 +202,13 @@ class ModelIns(multiprocessing.Process):
             else:
                 continue
 
-            if isinstance(req, Request):
+            req: Request
+            if req.r_id != -1:
                 time.sleep(self._capability)
+                req.t_end = time.perf_counter()
+                self.avg_latency = (self.avg_latency * self.req_num +
+                                    req.t_end - req.t_arri) / (self.req_num + 1)
+                self.req_num += 1
                 self._t_last = time.time()
-            elif req == -1:
+            else:
                 break

@@ -10,6 +10,9 @@ from typing import Tuple, Dict
 from src.model.component import CpuGen, Node, ModelIns, Request
 
 
+STOP_SLO = 1 << 30
+
+
 class Cluster(object):
     def __init__(self):
         self._nodes = []
@@ -124,12 +127,29 @@ class Controller(multiprocessing.Process):
                     self._model_insts.remove(model_inst)
             time.sleep(interval)
 
+    def report(self, interval=10):
+        """report the status of model instances and the average latency
+
+        Args:
+            interval: the interval between reporting
+        """
+        while True:
+            a = list(self._model_insts)
+            for item in a:
+                item: ModelIns
+                print(f'model inst: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency}')
+            time.sleep(interval)
+
     def run(self) -> None:
         # Once the controller starts, it deploys one model instance in the cluster
         self.deploy_model_inst()
         # start the monitor thread
         monitor = threading.Thread(target=self.monitoring, args=(60, 30))
         monitor.start()
+
+        # start the report thread
+        reporter = threading.Thread(target=self.report, args=(10,))
+        reporter.start()
 
         # start dispatching user queries
         while True:
@@ -149,6 +169,7 @@ class UserAgent(object):
     """
 
     def __init__(self, cluster: Cluster, config: Dict = None):
+        self.send_pipe = None
         self.cluster = cluster
         self._config = config
 
@@ -159,17 +180,18 @@ class UserAgent(object):
                                 slo=self._config['slo'])
         controller.start()
 
-    def querying(self, load, tatol_queries=10000):
+    def querying(self, load, total_queries=10000):
         """sending query request to the controller
 
         Args:
             load: the simulated query load (qps)
+            total_queries: the number of all queries to be sent
         """
         r_id = 0
         while True:
-            if r_id == 10000:
+            if r_id == total_queries:
                 break
-            req = Request(r_id, time.time(), 3)
+            req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
             self.send_pipe.send(req)
             time.sleep(random.expovariate(load))
@@ -193,7 +215,8 @@ def main():
         'slo': 3000,
     }
     user_agent = UserAgent(cluster, config)
-    user_agent.querying()
+    user_agent.start_up()
+    user_agent.querying(load=10)
 
 
 def test():
@@ -209,4 +232,5 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    # test()
+    main()
