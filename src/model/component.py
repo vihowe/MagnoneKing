@@ -2,12 +2,13 @@ import multiprocessing
 import queue
 from enum import Enum
 import time
+from typing import MutableMapping
 
 
 class Request(object):
     """magnetic detection request"""
 
-    def __init__(self, r_id, t_arri: float, t_slo: float, t_end=-1):
+    def __init__(self, r_id, t_arri: float = 0, t_slo: float = 0, t_end=-1):
         self._r_id = r_id
         self._t_arri = t_arri
         self._t_slo = t_slo
@@ -116,7 +117,7 @@ class Node(object):
         self._activated = value
 
     def __repr__(self):
-        return str(self._activated)
+        return f"Node('{self.node_id}', {self.free_cores}, {self.free_mem}, {self._core_gen}, {self.activated})"
 
     @free_cores.setter
     def free_cores(self, value):
@@ -139,7 +140,7 @@ class ModelIns(multiprocessing.Process):
         _mem: the size of memory possessed by the model instance
         _capability: the instance's capability to process one query
             processing time per query
-        recv_pipe: the pipe for receiving request from the controller
+        recv_pipe: the pipe for receiving msg from the controller
         _t_last: the time stamp when it process one query last time
         _pri_queue: the priority queue for EDL scheduling
         req_num: the number of served queries
@@ -155,11 +156,15 @@ class ModelIns(multiprocessing.Process):
         self._cores = cores
         self._mem = mem
         self._capability = capability
-        self._t_last = time.time()
+        self._t_last = multiprocessing.Value('d', time.time())
         self.recv_pipe = recv_pipe
         self._pri_queue = queue.PriorityQueue()
         self.req_num = 0
-        self.avg_latency = 0
+        self.avg_latency = multiprocessing.Value('d', 0.0)
+        self.queue_size = multiprocessing.Value('i', 0)
+    
+    # def __repr__(self) -> str:
+    #     return f"{self._p_node}"
 
     @property
     def p_node(self):
@@ -172,6 +177,10 @@ class ModelIns(multiprocessing.Process):
     @property
     def requeue(self):
         return self._requeue
+    
+    @property
+    def pri_queue(self):
+        return self._pri_queue
 
     @property
     def cores(self):
@@ -179,7 +188,7 @@ class ModelIns(multiprocessing.Process):
 
     @property
     def mem(self):
-        return self.mem
+        return self._mem
 
     @property
     def capability(self):
@@ -187,16 +196,19 @@ class ModelIns(multiprocessing.Process):
 
     @property
     def t_last(self):
-        return self._t_last
+        return self._t_last.value
 
     def run(self):
         # TODO using EDF strategy to schedule reqs in local queue and do processing
         while True:
-            q_size = self._requeue.qsize()
+            s = self._requeue.qsize()
+            self.queue_size.value = self._pri_queue.qsize()
+            
             # get all queries from queue and sort them by end line
-            for _ in range(q_size):
+            for _ in range(s):
                 req = self._requeue.get()
                 self._pri_queue.put(req)
+            
             if not self._pri_queue.empty():
                 req = self._pri_queue.get()
             else:
@@ -206,9 +218,14 @@ class ModelIns(multiprocessing.Process):
             if req.r_id != -1:
                 time.sleep(self._capability)
                 req.t_end = time.perf_counter()
-                self.avg_latency = (self.avg_latency * self.req_num +
-                                    req.t_end - req.t_arri) / (self.req_num + 1)
+
+                self.avg_latency: multiprocessing.Value
+                with self.avg_latency.get_lock():
+                    self.avg_latency.value = (self.avg_latency.value * self.req_num +
+                                        req.t_end - req.t_arri) / (self.req_num + 1)
                 self.req_num += 1
-                self._t_last = time.time()
+                with self._t_last.get_lock():
+                    self._t_last.value = time.time()
             else:
+                print(f"Model Instance {self} has exited")
                 break

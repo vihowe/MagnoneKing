@@ -4,8 +4,12 @@ import threading
 import time
 import multiprocessing
 import random
+import bisect
 
 from typing import Tuple, Dict
+
+import sys
+sys.path.append('/home/vihowe/project/MagnoneKing/')
 
 from src.model.component import CpuGen, Node, ModelIns, Request
 
@@ -34,17 +38,17 @@ class Controller(multiprocessing.Process):
         _model_insts: the current model instances in the cluster
         _slo: the general service level objective. The query with high
             priority may have more stringent slo.
-        comm_pipe: the pipe for communicating with user agent
+        recv_pipe: the pipe for communicating with user agent
     """
 
-    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, slo: float = 3000):
+    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 3):
 
         super().__init__()
         self._cluster = cluster
-        self._g_queue = multiprocessing.Queue()
+        self._g_queue = g_queue
         self._model_insts = []
         self._slo = slo
-        self._threshold = 0.9
+        self._threshold = 0.7
         self.recv_pipe = recv_pipe  # receiving msg from user agent
         self.send_pipe_dic = {}  # send request to appropriate model instance
 
@@ -53,15 +57,26 @@ class Controller(multiprocessing.Process):
         return self._slo
 
     def find_model_inst(self) -> ModelIns or None:
-        """find the model instance which owns the lowest relative load
+        """find the model instance which owns the highest relative load in the range of agreeing with SLO
             return None if all the instances' relative load exceed the threshold
         """
-        r_load = [len(model.requeue) * model.capabiity for model in self._model_insts]
-        min_r = min(range(len(r_load)), key=r_load.__getitem__)
-        if r_load[min_r] >= self._threshold * self._slo:
+        if len(self._model_insts) == 0:
             return None
-        else:
-            return self._model_insts[min_r]
+        r_load = [(model.queue_size.value + model.requeue.qsize()) * model.capability for model in self._model_insts]
+        # print(r_load)
+
+        slo_load = self._threshold * self._slo
+        rr = sorted(r_load)
+        a = bisect.bisect_left(rr, slo_load)    # the qualified relative load candidate
+        if a == 0:
+            return None
+        return self._model_insts[r_load.index(rr[a-1])]
+
+        # min_r = min(range(len(r_load)), key=r_load.__getitem__)
+        # if r_load[min_r] >= self._threshold * self._slo:
+        #     return None
+        # else:
+        #     return self._model_insts[min_r]
 
     def find_light_node(self) -> Node:
         """find an node which owns the greatest amount of resource"""
@@ -93,8 +108,10 @@ class Controller(multiprocessing.Process):
 
         parent, child = multiprocessing.Pipe()
         model_inst = ModelIns(c_node, cores=cores, mem=mem, capability=cap, recv_pipe=child)
+        model_inst.start()
         self.send_pipe_dic[model_inst] = parent
         self._model_insts.append(model_inst)
+
         return model_inst
 
     def dispatch(self, req: Request):
@@ -104,9 +121,10 @@ class Controller(multiprocessing.Process):
         a_model_inst = self.find_model_inst()
         if a_model_inst is None:  # all the model instances are under peak load
             a_model_inst = self.deploy_model_inst()
-        a_model_inst.requeue.append(req)
+        # print(f'****request {req} is sent to {a_model_inst}')
+        a_model_inst.requeue.put(req)
 
-    def monitoring(self, timeout=60, interval=60):
+    def monitoring(self, timeout=20, interval=20):
         """keep a lookout over all model instances, and clean model
         instance which is idle for a while
 
@@ -114,7 +132,6 @@ class Controller(multiprocessing.Process):
             timeout: to kill the model instance if its idle time is too long (s).
             interval: the interval (s).
         """
-        model_inst: ModelIns
         while True:
             for model_inst in self._model_insts:
                 if time.time() - model_inst.t_last > timeout:
@@ -123,11 +140,11 @@ class Controller(multiprocessing.Process):
                     p_node.free_cores += model_inst.cores
                     p_node.free_mem += model_inst.mem
                     # send signal to model instance for exiting
-                    model_inst.requeue.put(-1)
+                    model_inst.requeue.put(Request(-1))
                     self._model_insts.remove(model_inst)
             time.sleep(interval)
 
-    def report(self, interval=10):
+    def report(self, interval=5):
         """report the status of model instances and the average latency
 
         Args:
@@ -135,9 +152,11 @@ class Controller(multiprocessing.Process):
         """
         while True:
             a = list(self._model_insts)
+            print(f'==There are {len(a)} model instance ==')
             for item in a:
-                item: ModelIns
-                print(f'model inst: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency}')
+                print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}')
+            if len(a) == 0:
+                print(f"No model instance is activated now")
             time.sleep(interval)
 
     def run(self) -> None:
@@ -176,8 +195,8 @@ class UserAgent(object):
     def start_up(self):
         parent, child = multiprocessing.Pipe()
         self.send_pipe = parent
-        controller = Controller(cluster=self.cluster, recv_pipe=child,
-                                slo=self._config['slo'])
+        self.g_queue = multiprocessing.Queue()
+        controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._config['slo'])
         controller.start()
 
     def querying(self, load, total_queries=10000):
@@ -193,8 +212,15 @@ class UserAgent(object):
                 break
             req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
-            self.send_pipe.send(req)
-            time.sleep(random.expovariate(load))
+            self.g_queue.put(req)
+            # time.sleep(1000)
+            # print(f"request {r_id} have been sent.")
+            if r_id < 1000:
+                time.sleep(random.expovariate(3))
+            elif r_id < 1500:
+                time.sleep(random.expovariate(5))
+            else:
+                time.sleep(random.expovariate(100))
 
 
 def main():
@@ -207,16 +233,19 @@ def main():
         "phone": (8, 2048, CpuGen.B,),
         "pi": (4, 2048, CpuGen.A,),
     }
+    node_id = 1
     for v in node_specification.values():
         for _ in range(5):
-            cluster.add_node(Node(*v))
+            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+            cluster.add_node(n)
+            node_id += 1
 
     config = {
-        'slo': 3000,
+        'slo': 3,
     }
     user_agent = UserAgent(cluster, config)
     user_agent.start_up()
-    user_agent.querying(load=10)
+    user_agent.querying(load=5)
 
 
 def test():
