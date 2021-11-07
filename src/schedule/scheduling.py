@@ -85,8 +85,9 @@ class Controller(multiprocessing.Process):
             if not c_node.activated:
                 return c_node
 
-        scores = [c_node.free_cores * c_node.core_gen.value
-                  + c_node.free_mem for c_node in self._cluster.nodes]
+        scores = [0 if c_node.free_cores <= 0 or c_node.free_mem <= 0 else (c_node.free_cores * c_node.core_gen.value
+                  + c_node.free_mem) for c_node in self._cluster.nodes]
+        print(scores)
         return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
     def find_resource(self, c_node: Node) -> Tuple[int, int, float]:
@@ -124,7 +125,7 @@ class Controller(multiprocessing.Process):
         # print(f'****request {req} is sent to {a_model_inst}')
         a_model_inst.requeue.put(req)
 
-    def monitoring(self, timeout=20, interval=20):
+    def monitoring(self, timeout=10, interval=10):
         """keep a lookout over all model instances, and clean model
         instance which is idle for a while
 
@@ -215,10 +216,10 @@ class UserAgent(object):
             self.g_queue.put(req)
             # time.sleep(1000)
             # print(f"request {r_id} have been sent.")
-            if r_id < 1000:
-                time.sleep(random.expovariate(3))
-            elif r_id < 1500:
-                time.sleep(random.expovariate(5))
+            if r_id < 200:
+                time.sleep(random.expovariate(20))
+            elif r_id < 300:
+                time.sleep(random.expovariate(1))
             else:
                 time.sleep(random.expovariate(100))
 
@@ -235,7 +236,7 @@ def main():
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(5):
+        for _ in range(1):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
