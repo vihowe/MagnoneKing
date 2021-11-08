@@ -1,1 +1,5 @@
 .idea
+.npy
+.pt
+__pycache__
+.vscode

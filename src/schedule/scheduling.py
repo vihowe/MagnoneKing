@@ -62,7 +62,7 @@ class Controller(multiprocessing.Process):
         """
         if len(self._model_insts) == 0:
             return None
-        r_load = [(model.queue_size.value + model.requeue.qsize()) * model.capability for model in self._model_insts]
+        r_load = [(pow((model.queue_size.value + model.requeue.qsize()), 2) + (model.queue_size.value + model.requeue.qsize())) / 2 * model.capability for model in self._model_insts]
         # print(r_load)
 
         slo_load = self._threshold * self._slo
@@ -155,7 +155,7 @@ class Controller(multiprocessing.Process):
             a = list(self._model_insts)
             print(f'==There are {len(a)} model instance ==')
             for item in a:
-                print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}')
+                print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             if len(a) == 0:
                 print(f"No model instance is activated now")
             time.sleep(interval)
@@ -216,12 +216,12 @@ class UserAgent(object):
             self.g_queue.put(req)
             # time.sleep(1000)
             # print(f"request {r_id} have been sent.")
-            if r_id < 200:
-                time.sleep(random.expovariate(20))
-            elif r_id < 300:
+            if r_id < 40:
                 time.sleep(random.expovariate(1))
+            elif r_id < 200:
+                time.sleep(random.expovariate(20))
             else:
-                time.sleep(random.expovariate(100))
+                time.sleep(random.expovariate(1))
 
 
 def main():

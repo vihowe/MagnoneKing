@@ -159,7 +159,7 @@ class ModelIns(multiprocessing.Process):
         self._t_last = multiprocessing.Value('d', time.time())
         self.recv_pipe = recv_pipe
         self._pri_queue = queue.PriorityQueue()
-        self.req_num = 0
+        self.req_num = multiprocessing.Value('i', 0)
         self.avg_latency = multiprocessing.Value('d', 0.0)
         self.queue_size = multiprocessing.Value('i', 0)
     
@@ -221,9 +221,11 @@ class ModelIns(multiprocessing.Process):
 
                 self.avg_latency: multiprocessing.Value
                 with self.avg_latency.get_lock():
-                    self.avg_latency.value = (self.avg_latency.value * self.req_num +
-                                        req.t_end - req.t_arri) / (self.req_num + 1)
-                self.req_num += 1
+                    # print(self.avg_latency)
+                    self.avg_latency.value = (self.avg_latency.value * self.req_num.value +
+                                        req.t_end - req.t_arri) / (self.req_num.value + 1)
+                with self.req_num.get_lock():
+                    self.req_num.value += 1
                 with self._t_last.get_lock():
                     self._t_last.value = time.time()
             else:
