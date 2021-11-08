@@ -11,8 +11,7 @@ from typing import Tuple, Dict
 import sys
 sys.path.append('/home/vihowe/project/MagnoneKing/')
 
-from src.model.component import CpuGen, Node, ModelIns, Request
-
+from src.model.component import CpuGen, Node, ModelIns, Request, TaskType
 
 
 class Cluster(object):
@@ -37,6 +36,7 @@ class Controller(multiprocessing.Process):
         _slo: the general service level objective. The query with high
             priority may have more stringent slo.
         recv_pipe: the pipe for communicating with user agent
+        send_pipe_dic: store all the communication pipe with model instances
     """
 
     def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 3):
@@ -44,7 +44,7 @@ class Controller(multiprocessing.Process):
         super().__init__()
         self._cluster = cluster
         self._g_queue = g_queue
-        self._model_insts = []
+        self._model_insts = collections.defaultdict(list)
         self._slo = slo
         self._threshold = 0.7
         self.recv_pipe = recv_pipe  # receiving msg from user agent
@@ -54,14 +54,21 @@ class Controller(multiprocessing.Process):
     def slo(self):
         return self._slo
 
+    def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
+        """find the model instance which is responsible for `t_type` task and
+          owns the highest relative load in the range of agreeing with SLO
 
-    def find_model_inst(self) -> ModelIns or None:
-        """find the model instance which owns the highest relative load in the range of agreeing with SLO
+        Args:
+            t_type: the type of task to process
+
+        Return:
             return None if all the instances' relative load exceed the threshold
         """
-        if len(self._model_insts) == 0:
+        if len(self._model_insts[t_type]) == 0:
             return None
-        r_load = [(pow((model.queue_size.value + model.requeue.qsize()), 2) + (model.queue_size.value + model.requeue.qsize())) / 2 * model.capability for model in self._model_insts]
+        r_load = [(pow((model.queue_size.value + model.requeue.qsize()), 2)
+                   + (model.queue_size.value + model.requeue.qsize())) / 2
+                  * model.t_cost for model in self._model_insts[t_type]]
         # print(r_load)
 
         slo_load = self._threshold * self._slo
@@ -69,7 +76,7 @@ class Controller(multiprocessing.Process):
         a = bisect.bisect_left(rr, slo_load)    # the qualified relative load candidate
         if a == 0:
             return None
-        return self._model_insts[r_load.index(rr[a-1])]
+        return self._model_insts[t_type][r_load.index(rr[a-1])]
 
         # min_r = min(range(len(r_load)), key=r_load.__getitem__)
         # if r_load[min_r] >= self._threshold * self._slo:
@@ -77,9 +84,16 @@ class Controller(multiprocessing.Process):
         # else:
         #     return self._model_insts[min_r]
 
-    def find_light_node(self) -> Node:
-        """find an node which owns the greatest amount of resource"""
+    def find_light_node(self, task_type: TaskType) -> Node:
+        """find an node which is affinity to `task_type` model instance and
+        owns the greatest amount of resource
 
+        Args:
+            task_type: the type of model instance
+        Return:
+            Node: an appropriate node to bear this model instance
+        """
+        # TODO using a data structure to realize this function
         for c_node in self._cluster.nodes:
             if not c_node.activated:
                 return c_node
@@ -89,40 +103,53 @@ class Controller(multiprocessing.Process):
         print(scores)
         return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
-    def find_resource(self, c_node: Node) -> Tuple[int, int, float]:
+    def find_resource(self, c_node: Node, task_type: TaskType) -> Tuple[int, int, float]:
         """return the just enough resource when model is deployed on `c_node`
         and the model instance's capability. (processing time per query)
+
+        Args:
+            c_node: the node which have the model instance
+            task_type: the type of this model instance
         """
         # TODO find the just enough resource allocated to this model instance
         return 1, 100, 1.
 
-    def deploy_model_inst(self) -> ModelIns:
-        """deploy a new model instance in an appropriate node and allocate
-        just enough resource to it
+    def deploy_model_inst(self, task_type: TaskType) -> ModelIns:
+        """deploy a new model instance which processing `task_type` task
+        in an appropriate node and allocate just enough resource to it
+
+        Args:
+            task_type: the type of this model instance
         """
-        c_node = self.find_light_node()
-        cores, mem, cap = self.find_resource(c_node)
+
+        # find an appropriate node and resource amount
+        c_node = self.find_light_node(task_type)
+        cores, mem, cap = self.find_resource(c_node, task_type)
         c_node.free_cores -= cores
         c_node.free_mem -= mem
         c_node.activated = True
 
         parent, child = multiprocessing.Pipe()
-        model_inst = ModelIns(c_node, cores=cores, mem=mem, capability=cap, recv_pipe=child)
+        model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child)
         model_inst.start()
+
         self.send_pipe_dic[model_inst] = parent
-        self._model_insts.append(model_inst)
+        self._model_insts[task_type].append(model_inst)
 
         return model_inst
 
     def dispatch(self, req: Request):
         """dispatch the user's query in the global queue to an appropriate
-        model instance, do autoscaling simultaneously
+        model instance of each TaskType, do autoscaling simultaneously
         """
-        a_model_inst = self.find_model_inst()
-        if a_model_inst is None:  # all the model instances are under peak load
-            a_model_inst = self.deploy_model_inst()
-        # print(f'****request {req} is sent to {a_model_inst}')
-        a_model_inst.requeue.put(req)
+
+        # dispatch this request to all four types of tasks simultaneously
+        for _, t_type in TaskType.__members__.items():
+            a_model_inst = self.find_model_inst(t_type)
+            if a_model_inst is None:  # all the model instances are under peak load
+                a_model_inst = self.deploy_model_inst(t_type)
+            # print(f'****request {req} is sent to {a_model_inst}')
+            a_model_inst.requeue.put(req)
 
     def monitoring(self, timeout=10, interval=10):
         """keep a lookout over all model instances, and clean model

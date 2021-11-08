@@ -66,14 +66,13 @@ class CpuGen(Enum):
     C = 300
     D = 400
 
+
 class TaskType(Enum):
-    """Five types of tasks"""
+    """four types of tasks"""
     A = 0
     B = 1
     C = 2
     D = 3
-    E = 4
-    
 
 
 class Node(object):
@@ -148,7 +147,7 @@ class ModelIns(multiprocessing.Process):
             containing the queries from global controller
         _cores: the cores possessed by the model instance
         _mem: the size of memory possessed by the model instance
-        _capability: the instance's capability to process one query
+        _t_cost: the instance's capability to process one query
             processing time per query
         recv_pipe: the pipe for receiving msg from the controller
         _t_last: the time stamp when it process one query last time
@@ -156,24 +155,25 @@ class ModelIns(multiprocessing.Process):
         req_num: the number of served queries
         avg_latency: the average latency
     """
-    def __init__(self, p_node: Node, cores: int, mem: int, capability: float, recv_pipe: multiprocessing.Pipe,
-                 is_replica: bool = False, t_type=TaskType.A):
+
+    def __init__(self, t_type, p_node: Node, cores: int, mem: int, t_cost: float, recv_pipe: multiprocessing.Pipe,
+                 is_replica: bool = False, ):
         """Model instance initialize"""
         super().__init__()
-        self._type= t_type
+        self._type = t_type
         self._p_node = p_node
         self._is_replica = is_replica
         self._requeue = multiprocessing.Queue()
         self._cores = cores
         self._mem = mem
-        self._capability = capability
+        self._t_cost = t_cost
         self._t_last = multiprocessing.Value('d', time.time())
         self.recv_pipe = recv_pipe
         self._pri_queue = queue.PriorityQueue()
         self.req_num = multiprocessing.Value('i', 0)
         self.avg_latency = multiprocessing.Value('d', 0.0)
         self.queue_size = multiprocessing.Value('i', 0)
-    
+
     # def __repr__(self) -> str:
     #     return f"{self._p_node}"
 
@@ -188,7 +188,7 @@ class ModelIns(multiprocessing.Process):
     @property
     def requeue(self):
         return self._requeue
-    
+
     @property
     def pri_queue(self):
         return self._pri_queue
@@ -202,8 +202,8 @@ class ModelIns(multiprocessing.Process):
         return self._mem
 
     @property
-    def capability(self):
-        return self._capability
+    def t_cost(self):
+        return self._t_cost
 
     @property
     def t_last(self):
@@ -214,12 +214,12 @@ class ModelIns(multiprocessing.Process):
         while True:
             s = self._requeue.qsize()
             self.queue_size.value = self._pri_queue.qsize()
-            
+
             # get all queries from queue and sort them by end line
             for _ in range(s):
                 req = self._requeue.get()
                 self._pri_queue.put(req)
-            
+
             if not self._pri_queue.empty():
                 req = self._pri_queue.get()
             else:
@@ -227,14 +227,14 @@ class ModelIns(multiprocessing.Process):
 
             req: Request
             if req.r_id != -1:
-                time.sleep(self._capability)
+                time.sleep(self._t_cost)
                 req.t_end = time.perf_counter()
 
                 self.avg_latency: multiprocessing.Value
                 with self.avg_latency.get_lock():
                     # print(self.avg_latency)
                     self.avg_latency.value = (self.avg_latency.value * self.req_num.value +
-                                        req.t_end - req.t_arri) / (self.req_num.value + 1)
+                                              req.t_end - req.t_arri) / (self.req_num.value + 1)
                 with self.req_num.get_lock():
                     self.req_num.value += 1
                 with self._t_last.get_lock():
