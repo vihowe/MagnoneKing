@@ -29,8 +29,8 @@ def location_program(a_st,a_ed,x,y,sample_index):
     #
     #####################################################################
 
-    train_flag = 1   # 是否重新训练
-    genrate_dataset = 1  # 是否需要生成数据
+    train_flag = 0   # 是否重新训练
+    genrate_dataset = 0  # 是否需要生成数据
 
     if train_flag:
         

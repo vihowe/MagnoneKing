@@ -66,6 +66,15 @@ class CpuGen(Enum):
     C = 300
     D = 400
 
+class TaskType(Enum):
+    """Five types of tasks"""
+    A = 0
+    B = 1
+    C = 2
+    D = 3
+    E = 4
+    
+
 
 class Node(object):
     """The specification of computing node
@@ -132,6 +141,7 @@ class ModelIns(multiprocessing.Process):
     """A deployed model instance
 
     Attributes:
+        _type: the type of the task it is running
         _p_node: the node where the model instance is deployed on
         _is_replica: indicating whether the instance is a replica
         _requeue: the local queue for this model instance,
@@ -147,9 +157,10 @@ class ModelIns(multiprocessing.Process):
         avg_latency: the average latency
     """
     def __init__(self, p_node: Node, cores: int, mem: int, capability: float, recv_pipe: multiprocessing.Pipe,
-                 is_replica: bool = False):
+                 is_replica: bool = False, t_type=TaskType.A):
         """Model instance initialize"""
         super().__init__()
+        self._type= t_type
         self._p_node = p_node
         self._is_replica = is_replica
         self._requeue = multiprocessing.Queue()

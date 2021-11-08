@@ -14,8 +14,6 @@ sys.path.append('/home/vihowe/project/MagnoneKing/')
 from src.model.component import CpuGen, Node, ModelIns, Request
 
 
-STOP_SLO = 1 << 30
-
 
 class Cluster(object):
     def __init__(self):
@@ -55,6 +53,7 @@ class Controller(multiprocessing.Process):
     @property
     def slo(self):
         return self._slo
+
 
     def find_model_inst(self) -> ModelIns or None:
         """find the model instance which owns the highest relative load in the range of agreeing with SLO
