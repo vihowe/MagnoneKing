@@ -6,7 +6,7 @@ import multiprocessing
 import random
 import bisect
 
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 
 import sys
 sys.path.append('/home/vihowe/project/MagnoneKing/')
@@ -37,6 +37,7 @@ class Controller(multiprocessing.Process):
             priority may have more stringent slo.
         recv_pipe: the pipe for communicating with user agent
         send_pipe_dic: store all the communication pipe with model instances
+        ret_queue: store the results from all model instance
     """
 
     def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 3):
@@ -49,11 +50,28 @@ class Controller(multiprocessing.Process):
         self._threshold = 0.7
         self.recv_pipe = recv_pipe  # receiving msg from user agent
         self.send_pipe_dic = {}  # send request to appropriate model instance
+        self.ret_queue = multiprocessing.Queue()
+        self._task_affinity = None
 
     @property
     def slo(self):
         return self._slo
 
+    def profile(self) -> Dict[TaskType, List[Tuple(Node, Tuple(int, int))]]:
+        """Simulate the profiling process to find the affinity of each task to each node
+
+        Return:
+            For each type of task, return a list of nodes ordered by affinity priority cupled
+            with the appropriate amount of resource (#cpus, mem)
+            when the task is deployed on it.
+        """
+        # TODO read from profiled file to generate this data structure
+        ret = {}
+        nodes = self._cluster.nodes
+        for _, t_type in TaskType.__members__.items():
+            ret[t_type] = (random.sample(nodes, k=len(nodes)), (1, random.randint(20, 100)))
+        self._task_affinity = ret
+            
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and
           owns the highest relative load in the range of agreeing with SLO
@@ -130,7 +148,7 @@ class Controller(multiprocessing.Process):
         c_node.activated = True
 
         parent, child = multiprocessing.Pipe()
-        model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child)
+        model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child, ret_queue=self.ret_queue)
         model_inst.start()
 
         self.send_pipe_dic[model_inst] = parent
@@ -187,8 +205,11 @@ class Controller(multiprocessing.Process):
             time.sleep(interval)
 
     def run(self) -> None:
-        # Once the controller starts, it deploys one model instance in the cluster
-        self.deploy_model_inst()
+        # Once the controller starts, it profiles all type of tasks to get the affinity data
+        # and deploys one set of model instance in the cluster
+        self.profile()
+        for _, t_type in TaskType.__members__.items():
+            self.deploy_model_inst(t_type)
         # start the monitor thread
         monitor = threading.Thread(target=self.monitoring, args=(60, 30))
         monitor.start()

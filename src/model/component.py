@@ -154,9 +154,10 @@ class ModelIns(multiprocessing.Process):
         _pri_queue: the priority queue for EDL scheduling
         req_num: the number of served queries
         avg_latency: the average latency
+        _ret_queue: where to store the result
     """
 
-    def __init__(self, t_type, p_node: Node, cores: int, mem: int, t_cost: float, recv_pipe: multiprocessing.Pipe,
+    def __init__(self, t_type, p_node: Node, cores: int, mem: int, t_cost: float, recv_pipe: multiprocessing.Pipe,ret_queue: multiprocessing.Queue,
                  is_replica: bool = False, ):
         """Model instance initialize"""
         super().__init__()
@@ -173,6 +174,7 @@ class ModelIns(multiprocessing.Process):
         self.req_num = multiprocessing.Value('i', 0)
         self.avg_latency = multiprocessing.Value('d', 0.0)
         self.queue_size = multiprocessing.Value('i', 0)
+        self._ret_queue = ret_queue
 
     # def __repr__(self) -> str:
     #     return f"{self._p_node}"
@@ -194,6 +196,10 @@ class ModelIns(multiprocessing.Process):
         return self._pri_queue
 
     @property
+    def ret_queue(self):
+        return self._ret_queue
+
+    @property
     def cores(self):
         return self._cores
 
@@ -210,7 +216,6 @@ class ModelIns(multiprocessing.Process):
         return self._t_last.value
 
     def run(self):
-        # TODO using EDF strategy to schedule reqs in local queue and do processing
         while True:
             s = self._requeue.qsize()
             self.queue_size.value = self._pri_queue.qsize()
@@ -229,6 +234,8 @@ class ModelIns(multiprocessing.Process):
             if req.r_id != -1:
                 time.sleep(self._t_cost)
                 req.t_end = time.perf_counter()
+
+                self._ret_queue.put(req)    # store the result back
 
                 self.avg_latency: multiprocessing.Value
                 with self.avg_latency.get_lock():
