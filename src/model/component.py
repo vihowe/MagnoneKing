@@ -180,6 +180,10 @@ class ModelIns(multiprocessing.Process):
     #     return f"{self._p_node}"
 
     @property
+    def t_type(self):
+        return self._type
+
+    @property
     def p_node(self):
         return self._p_node
 

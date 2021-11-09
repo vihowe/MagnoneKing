@@ -26,6 +26,26 @@ class Cluster(object):
         return self._nodes
 
 
+def report_lat(ret_queue: multiprocessing.Queue, interval = 5):
+    """report the avg latency of all finished queries"""
+    ret_dict = collections.defaultdict(list)
+    avg_lat = 0.
+    req_num = 0
+    t_start = time.time()
+    while True:
+        req: Request
+        req = ret_queue.get()
+        ret_dict[req.r_id].append(req.t_end - req.t_arri)
+        if len(ret_dict[req.r_id]) == len(TaskType.__members__):
+            avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
+            if time.time() - t_start >= interval:
+                print(f'***************avg latency: {avg_lat}*******************')
+                t_start = time.time()
+            req_num += 1
+            ret_dict.pop(req.r_id)
+        
+
+
 class Controller(multiprocessing.Process):
     """The controller for load balancing and auto scaling
 
@@ -41,7 +61,7 @@ class Controller(multiprocessing.Process):
         ret_queue: store the results from all model instance
     """
 
-    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 3):
+    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 1):
 
         super().__init__()
         self._cluster = cluster
@@ -115,7 +135,7 @@ class Controller(multiprocessing.Process):
             (Node, estimated_time): an appropriate node to bear this model instance
                 and its resource allocation and estimated processing time for running this task
         """
-        print(self._task_affinity[task_type])
+        # print(self._task_affinity[task_type])
         for c_node, item in self._task_affinity[task_type]:
 
             if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
@@ -151,8 +171,8 @@ class Controller(multiprocessing.Process):
 
         # find an appropriate node and resource amount
         c_node, resource_allo = self.find_light_node(task_type)
-        print(c_node, resource_allo)
-        time.sleep(3)
+        # print(c_node, resource_allo)
+        # time.sleep(3)
         # cores, mem, cap = self.find_resource(c_node, task_type)
         cores = resource_allo[0]
         mem = resource_allo[1]
@@ -202,7 +222,7 @@ class Controller(multiprocessing.Process):
                         p_node.free_mem += model_inst.mem
                         # send signal to model instance for exiting
                         model_inst.requeue.put(Request(-1))
-                        self._model_insts.remove(model_inst)
+                        self._model_insts[k].remove(model_inst)
             time.sleep(interval)
 
     def report(self, interval=5):
@@ -217,10 +237,9 @@ class Controller(multiprocessing.Process):
             for k, v in self._model_insts.items():
                 model_num += len(v)
             print(f'==There are {model_num} model instance ==')
-            # for item in a:
-            #     print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
-            # if len(a) == 0:
-            #     print(f"No model instance is activated now")
+            for k, v in self._model_insts.items():
+                for item in v:
+                    print(f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
 
     def run(self) -> None:
@@ -236,6 +255,10 @@ class Controller(multiprocessing.Process):
         # start the report thread
         reporter = threading.Thread(target=self.report, args=(10,))
         reporter.start()
+
+        # start report avg latency process
+        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue,), daemon=True)
+        p.start()
 
         # start dispatching user queries
         while True:
@@ -283,9 +306,9 @@ class UserAgent(object):
             # time.sleep(1000)
             # print(f"request {r_id} have been sent.")
             if r_id < 40:
-                time.sleep(random.expovariate(1))
+                time.sleep(random.expovariate(2))
             elif r_id < 200:
-                time.sleep(random.expovariate(20))
+                time.sleep(random.expovariate(80))
             else:
                 time.sleep(random.expovariate(1))
 
