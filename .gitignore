@@ -1,5 +1,5 @@
 .idea
-.npy
-.pt
+*.npy
+*.pt
 __pycache__
 .vscode

@@ -32,7 +32,8 @@ class Controller(multiprocessing.Process):
     Attributes:
         _cluster: the cluster that the controller is in charge
         _g_queue: the queue for storing all user queries
-        _model_insts: the current model instances in the cluster
+        _model_insts: a dict storing all kinds of model instances.
+            _model_insts[task_type] = List[model_instance]
         _slo: the general service level objective. The query with high
             priority may have more stringent slo.
         recv_pipe: the pipe for communicating with user agent
@@ -57,20 +58,22 @@ class Controller(multiprocessing.Process):
     def slo(self):
         return self._slo
 
-    def profile(self) -> Dict[TaskType, List[Tuple(Node, Tuple(int, int))]]:
+    def profile(self) -> Dict[TaskType, List[Tuple[Node, Tuple[int, int, float]]]]:
         """Simulate the profiling process to find the affinity of each task to each node
 
         Return:
             For each type of task, return a list of nodes ordered by affinity priority cupled
             with the appropriate amount of resource (#cpus, mem)
-            when the task is deployed on it.
+            when the task is deployed on it, and the estimated processing time.
         """
         # TODO read from profiled file to generate this data structure
         ret = {}
         nodes = self._cluster.nodes
         for _, t_type in TaskType.__members__.items():
-            ret[t_type] = (random.sample(nodes, k=len(nodes)), (1, random.randint(20, 100)))
-        self._task_affinity = ret
+            ordered_nodes = random.sample(nodes, k=len(nodes))
+            resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
+            ret[t_type] = list(zip(ordered_nodes, resource_cap))
+        return ret
             
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and
@@ -109,17 +112,23 @@ class Controller(multiprocessing.Process):
         Args:
             task_type: the type of model instance
         Return:
-            Node: an appropriate node to bear this model instance
+            (Node, estimated_time): an appropriate node to bear this model instance
+                and its resource allocation and estimated processing time for running this task
         """
-        # TODO using a data structure to realize this function
-        for c_node in self._cluster.nodes:
-            if not c_node.activated:
-                return c_node
+        print(self._task_affinity[task_type])
+        for c_node, item in self._task_affinity[task_type]:
 
-        scores = [0 if c_node.free_cores <= 0 or c_node.free_mem <= 0 else (c_node.free_cores * c_node.core_gen.value
-                  + c_node.free_mem) for c_node in self._cluster.nodes]
-        print(scores)
-        return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
+            if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
+                return (c_node, item)
+        # TODO what if all resource are run out
+        # for c_node in self._cluster.nodes:
+        #     if not c_node.activated:
+        #         return c_node
+
+        # scores = [0 if c_node.free_cores <= 0 or c_node.free_mem <= 0 else (c_node.free_cores * c_node.core_gen.value
+        #           + c_node.free_mem) for c_node in self._cluster.nodes]
+        # print(scores)
+        # return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
     def find_resource(self, c_node: Node, task_type: TaskType) -> Tuple[int, int, float]:
         """return the just enough resource when model is deployed on `c_node`
@@ -141,8 +150,14 @@ class Controller(multiprocessing.Process):
         """
 
         # find an appropriate node and resource amount
-        c_node = self.find_light_node(task_type)
-        cores, mem, cap = self.find_resource(c_node, task_type)
+        c_node, resource_allo = self.find_light_node(task_type)
+        print(c_node, resource_allo)
+        time.sleep(3)
+        # cores, mem, cap = self.find_resource(c_node, task_type)
+        cores = resource_allo[0]
+        mem = resource_allo[1]
+        cap = resource_allo[2]
+
         c_node.free_cores -= cores
         c_node.free_mem -= mem
         c_node.activated = True
@@ -178,15 +193,16 @@ class Controller(multiprocessing.Process):
             interval: the interval (s).
         """
         while True:
-            for model_inst in self._model_insts:
-                if time.time() - model_inst.t_last > timeout:
-                    # free resource
-                    p_node = model_inst.p_node
-                    p_node.free_cores += model_inst.cores
-                    p_node.free_mem += model_inst.mem
-                    # send signal to model instance for exiting
-                    model_inst.requeue.put(Request(-1))
-                    self._model_insts.remove(model_inst)
+            for k, v in self._model_insts.items():
+                for model_inst in v:
+                    if time.time() - model_inst.t_last > timeout:
+                        # free resource
+                        p_node = model_inst.p_node
+                        p_node.free_cores += model_inst.cores
+                        p_node.free_mem += model_inst.mem
+                        # send signal to model instance for exiting
+                        model_inst.requeue.put(Request(-1))
+                        self._model_insts.remove(model_inst)
             time.sleep(interval)
 
     def report(self, interval=5):
@@ -196,18 +212,21 @@ class Controller(multiprocessing.Process):
             interval: the interval between reporting
         """
         while True:
-            a = list(self._model_insts)
-            print(f'==There are {len(a)} model instance ==')
-            for item in a:
-                print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
-            if len(a) == 0:
-                print(f"No model instance is activated now")
+            # a = list(self._model_insts)
+            model_num = 0
+            for k, v in self._model_insts.items():
+                model_num += len(v)
+            print(f'==There are {model_num} model instance ==')
+            # for item in a:
+            #     print(f'\t{item}: p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
+            # if len(a) == 0:
+            #     print(f"No model instance is activated now")
             time.sleep(interval)
 
     def run(self) -> None:
         # Once the controller starts, it profiles all type of tasks to get the affinity data
         # and deploys one set of model instance in the cluster
-        self.profile()
+        self._task_affinity = self.profile()
         for _, t_type in TaskType.__members__.items():
             self.deploy_model_inst(t_type)
         # start the monitor thread
