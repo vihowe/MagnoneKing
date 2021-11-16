@@ -98,7 +98,7 @@ class Node(object):
 
     @property
     def cores(self):
-        return self.cores
+        return self._cores
 
     @property
     def mem(self):

@@ -3,7 +3,9 @@ import sys
 import functools
 import threading
 import time
+import sys
 
+sys.path.append('/home/vihowe/project/MagnoneKing/')
 import PyQt5.QtWidgets as QtWidgets
 import networkx as nx
 import numpy as np
@@ -42,7 +44,7 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._cluster = cluster
         self.comm_pipe = comm_pipe
         self.setWindowTitle('磁探测')
-        self.setFixedSize(1200, 1000)
+        self.setFixedSize(800, 800)
         self._centralWidget = QtWidgets.QWidget(self)
         self.setCentralWidget(self._centralWidget)
         self.generalLayout = QtWidgets.QVBoxLayout()
@@ -84,7 +86,7 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._load_ax = load_canvas.figure.subplots()
         x = np.linspace(0, 100, 100)
         self._cur_load = collections.deque(np.zeros_like(x), maxlen=100)
-        self._load_ax.set_ylim(0, 100)
+        self._load_ax.set_ylim(0, 200)
         self._load_ax.set_xlim(0, 100)
         self._load_ax.set_xticks([])
         self._load_line, = self._load_ax.plot(x, self._cur_load)
@@ -129,9 +131,9 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._nodes = []
         for c_node in self.cluster.nodes:
             self._nodes.append(c_node)
-        for _ in range(2):
-            random.choice(self._nodes).activated = True
-            random.choice(self._nodes).activated = False
+        # for _ in range(2):
+        #     random.choice(self._nodes).activated = True
+        #     random.choice(self._nodes).activated = False
         color_map = ['#33A6CC' if c_node.activated else 'gray'
                      for c_node in self._nodes]
         nx.draw(self._G, pos=self._nodes_pos, ax=self._nodes_ax,
@@ -147,6 +149,19 @@ class MagnoneUi(QtWidgets.QMainWindow):
     def dynamic_load(self):
         while True:
             self.set_load(random.randint(1, 10))
+            time.sleep(1)
+    
+    def dynamic_node(self):
+        while True:
+            cluster = Cluster()
+            for c_node in self.cluster.nodes:
+                r = random.randint(0, 1)
+                if r == 1:
+                    c_node.activated = True
+                else:
+                    c_node.activated = False
+                cluster.add_node(c_node)
+            self.set_cluster(cluster)
             time.sleep(1)
 
     # def setNodePanelPic(self, pic: str):
@@ -259,4 +274,7 @@ if __name__ == '__main__':
 
     T = threading.Thread(target=win.dynamic_load)
     T.start()
-    app.exec()
+
+    T2 = threading.Thread(target=win.dynamic_node)
+    T2.start()
+    sys.exit(app.exec())

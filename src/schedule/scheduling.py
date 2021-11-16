@@ -206,7 +206,7 @@ class Controller(multiprocessing.Process):
             # print(f'****request {req} is sent to {a_model_inst}')
             a_model_inst.requeue.put(req)
 
-    def monitoring(self, timeout=10, interval=10):
+    def monitoring(self, timeout=5, interval=5):
         """keep a lookout over all model instances, and clean model
         instance which is idle for a while
 
@@ -222,6 +222,8 @@ class Controller(multiprocessing.Process):
                         p_node = model_inst.p_node
                         p_node.free_cores += model_inst.cores
                         p_node.free_mem += model_inst.mem
+                        if p_node.free_cores == p_node.cores:
+                            p_node.activated = False
                         # send signal to model instance for exiting
                         model_inst.requeue.put(Request(-1))
                         self._model_insts[k].remove(model_inst)
@@ -241,9 +243,17 @@ class Controller(multiprocessing.Process):
             print(f'==There are {model_num} model instance ==')
             for k, v in self._model_insts.items():
                 for item in v:
-                    print(
-                        f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
+                    pass
+                    # print(
+                        # f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
+
+    def report_cluster(self):
+        while True:
+            msg = self.recv_pipe.recv()
+            if msg == 'cluster':
+                self.recv_pipe.send(self._cluster)
+
 
     def run(self) -> None:
         # Once the controller starts, it profiles all type of tasks to get the affinity data
@@ -258,6 +268,9 @@ class Controller(multiprocessing.Process):
         # start the report thread
         reporter = threading.Thread(target=self.report, args=(10,))
         reporter.start()
+
+        T_report_cluster = threading.Thread(target=self.report_cluster)
+        T_report_cluster.start()
 
         # start report avg latency process
         p = multiprocessing.Process(target=report_lat, args=(self.ret_queue,), daemon=True)
@@ -287,17 +300,17 @@ class UserAgent(multiprocessing.Process):
         self.comm_pipe = comm_pipe  # the pipe for communication with the view
         self.send_pipe = None
         self.cluster = cluster
-        self._config = config
+        self._run_config = config
         self.load = load
 
     def start_up(self):
         parent, child = multiprocessing.Pipe()
         self.send_pipe = parent
         self.g_queue = multiprocessing.Queue()
-        controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._config['slo'])
+        controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'])
         controller.start()
 
-    def querying(self, total_queries=10000):
+    def querying(self, total_queries=1600):
         """sending query request to the controller
 
         Args:
@@ -307,6 +320,7 @@ class UserAgent(multiprocessing.Process):
         r_id = 0
         while True:
             if r_id == total_queries:
+                self.load = 0
                 break
             req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
@@ -316,15 +330,18 @@ class UserAgent(multiprocessing.Process):
             elif r_id < 500:
                 self.load = random.randint(40, 60)
             elif r_id < 1500:
-                self.load = random.randint(100, 120)
+                self.load = random.randint(200, 220)
             else:
-                self.load = random.randint(10, 20)
+                self.load = random.randint(1, 10)
             time.sleep(random.expovariate(self.load))
 
     def report(self, interval=1):
         """report the current cluster status and load to view"""
         while True:
-            self.comm_pipe.send((self.cluster, self.load))
+            self.send_pipe.send('cluster')
+            clu = self.send_pipe.recv()
+            # print(clu.nodes, self.load)
+            self.comm_pipe.send((clu, self.load))
             time.sleep(interval)
 
     def run(self) -> None:
@@ -346,7 +363,7 @@ def main():
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(1):
+        for _ in range(4):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
@@ -355,8 +372,11 @@ def main():
         'slo': 3,
     }
     user_agent = UserAgent(cluster, None, config)
-    user_agent.start_up()
-    user_agent.querying()
+    # user_agent.start_up()
+    # user_agent.querying()
+    user_agent.start()
+    user_agent.join()
+    # user_agent.run()
 
 
 def test():

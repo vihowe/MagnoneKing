@@ -1,6 +1,9 @@
 import multiprocessing
 import threading
 import time
+import sys
+
+sys.path.append('/home/vihowe/project/MagnoneKing/')
 
 from PyQt5 import QtWidgets
 
@@ -28,12 +31,13 @@ def simulate():
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(1):
+        for _ in range(5):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
     p0, p1 = multiprocessing.Pipe()
     win = MagnoneUi(cluster=cluster, comm_pipe=p0)
+    win.show()
     magnoneCtrl = MagnoneCtrl(view=win)
 
     # view needs to communicate with the user agent to get the status of the cluster and current load
@@ -42,11 +46,11 @@ def simulate():
         'slo': 3,
     }
     user_agent = UserAgent(cluster, comm_pipe=p1, config=config)
-    user_agent.run()
+    user_agent.start()
 
     T = threading.Thread(target=update, args=(win, p0))
     T.start()
-    app.exec()
+    sys.exit(app.exec())
 
 
 if __name__ == '__main__':
