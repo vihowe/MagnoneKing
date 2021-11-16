@@ -70,12 +70,14 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._load_ax.set_xticks([])
         self._load_line, = self._load_ax.plot(x, self._cur_load)
         self._load_timer = load_canvas.new_timer(900)
-        self._load_timer.add_callback(self._updateLoadPanel)
+        cur_load = random.randint(0, 100)
+        self._load_timer.add_callback(self._updateLoadPanel, cur_load)
         # self._load_timer.start()
 
-    def _updateLoadPanel(self):
+    def _updateLoadPanel(self, load):
         x = np.linspace(0, 100, 100)
-        self._cur_load.append(random.randint(0, 100))
+        # self._cur_load.append(random.randint(0, 100))
+        self._cur_load.append(load)
         self._load_line.set_data(x, self._cur_load)
         self._load_line.figure.canvas.draw()
 

@@ -6,6 +6,7 @@ from LocationStarv2 import *
 from models import *
 from gen_train_data import gen_data
 import time
+import argparse
 
 
 # 均方误差
@@ -736,13 +737,72 @@ def main(sample_rate=1):
     return "finished"
 
 
+def test_loc(location_func, sample_rate=1,):
+    ######################################################################
+    #                      Test program
+    #       sample rate : 1000 samples per second
+    #       velocity : 0.1m/s
+    #
+    ######################################################################
+    grid_size = 0.4  # 0.4m
+    velocity = 0.1  # 0.1m/s
+
+    nosample = int(grid_size / velocity * sample_rate)  # 4000
+
+    delta_ = velocity / sample_rate  # every data moving distance
+
+    x = np.arange(0, 15, 1)
+    y = np.arange(0, 15, 1)
+
+    # 不同算法预测的位置向量
+    ret_ = np.zeros((len(x) * len(y), 3 * nosample))
+    # istar_ = np.zeros((len(x) * len(y), 3 * nosample))  # ISTAR
+    # nn_istar_ = np.zeros((len(x) * len(y), 3 * nosample))  # NN-ISTAR
+    # aistar_ = np.zeros((len(x) * len(y), 3 * nosample))  # Avg ISTAR
+    # nn_aistar_ = np.zeros((len(x) * len(y), 3 * nosample))  # Avg NN-ISTAR
+
+    for i in np.arange(nosample):
+        sample_index = i + 1
+        print('sample index = {}'.format(sample_index))
+        a_st = -1 + delta_ * i
+        a_ed = 1 + delta_ * i
+
+        # no position x 3
+        # istar, nn_istar, aistar, nn_aistar = location_program(a_st,a_ed,x,y,sample_index)
+        ret = location_func(a_st, a_ed, x, y, sample_index)
+        # istar = location_program_istar(a_st, a_ed, x, y, sample_index)
+        # nn_istar = location_program_nn_istar(a_st, a_ed, x, y, sample_index)
+        # aistar = location_program_aistar(a_st, a_ed, x, y, sample_index)
+        # nn_aistar = location_program_nn_aistar(a_st, a_ed, x, y, sample_index)
+        ret_[:, i * 3:(i + 1) * 3] = ret
+
+        # istar_[:, i * 3:(i + 1) * 3] = istar
+        # nn_istar_[:, i * 3:(i + 1) * 3] = nn_istar
+        # aistar_[:, i * 3:(i + 1) * 3] = aistar
+        # nn_aistar_[:, i * 3:(i + 1) * 3] = nn_aistar
+
+    # 最后将预测的位置向量保存在csv文件中
+    # np.savetxt('istar.csv', istar_, delimiter = ',')
+    # np.savetxt('nn_istar.csv',nn_istar_, delimiter = ',')
+    # np.savetxt('aistar.csv',aistar_, delimiter = ',')
+    # np.savetxt('nn_aistar.csv',nn_aistar_, delimiter = ',')
+    return "finished"
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--task', type=int, default=0)
+    args = parser.parse_args()
+
+
     sample_rate = 1  # 次/秒  (采样率，改变该参数可以提高定位的数据量)
 
     # 注意修改采样率之后，需要在定位程序里重新生成训练数据和重新训练神经网络
     # 即将下面两个参数设置为1
     # train_flag = 1   # 是否重新训练
     #     genrate_dataset = 1  # 是否需要生成数据
+    location_funcs = [location_program_istar, location_program_aistar, location_program_nn_istar, location_program_nn_aistar]
     t_start = time.perf_counter()
-    main(sample_rate)
-    print(f"elapsed time: {(time.perf_counter() - t_start)*1000} ms")
+    # main(sample_rate)
+    test_loc(location_funcs[args.task])
+    print(f"elapsed time: {(time.perf_counter() - t_start)*1000/225} ms")
