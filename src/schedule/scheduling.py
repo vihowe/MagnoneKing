@@ -9,6 +9,7 @@ import bisect
 from typing import Tuple, Dict, List
 
 import sys
+
 sys.path.append('/home/vihowe/project/MagnoneKing/')
 
 from src.model.component import CpuGen, Node, ModelIns, Request, TaskType
@@ -26,7 +27,7 @@ class Cluster(object):
         return self._nodes
 
 
-def report_lat(ret_queue: multiprocessing.Queue, interval = 5):
+def report_lat(ret_queue: multiprocessing.Queue, interval=5):
     """report the avg latency of all finished queries"""
     ret_dict = collections.defaultdict(list)
     avg_lat = 0.
@@ -43,7 +44,6 @@ def report_lat(ret_queue: multiprocessing.Queue, interval = 5):
                 t_start = time.time()
             req_num += 1
             ret_dict.pop(req.r_id)
-        
 
 
 class Controller(multiprocessing.Process):
@@ -61,7 +61,8 @@ class Controller(multiprocessing.Process):
         ret_queue: store the results from all model instance
     """
 
-    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue, slo: float = 1):
+    def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue,
+                 slo: float = 1):
 
         super().__init__()
         self._cluster = cluster
@@ -94,7 +95,7 @@ class Controller(multiprocessing.Process):
             resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
             ret[t_type] = list(zip(ordered_nodes, resource_cap))
         return ret
-            
+
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and
           owns the highest relative load in the range of agreeing with SLO
@@ -114,10 +115,10 @@ class Controller(multiprocessing.Process):
 
         slo_load = self._threshold * self._slo
         rr = sorted(r_load)
-        a = bisect.bisect_left(rr, slo_load)    # the qualified relative load candidate
+        a = bisect.bisect_left(rr, slo_load)  # the qualified relative load candidate
         if a == 0:
             return None
-        return self._model_insts[t_type][r_load.index(rr[a-1])]
+        return self._model_insts[t_type][r_load.index(rr[a - 1])]
 
         # min_r = min(range(len(r_load)), key=r_load.__getitem__)
         # if r_load[min_r] >= self._threshold * self._slo:
@@ -183,7 +184,8 @@ class Controller(multiprocessing.Process):
         c_node.activated = True
 
         parent, child = multiprocessing.Pipe()
-        model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child, ret_queue=self.ret_queue)
+        model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child,
+                              ret_queue=self.ret_queue)
         model_inst.start()
 
         self.send_pipe_dic[model_inst] = parent
@@ -239,7 +241,8 @@ class Controller(multiprocessing.Process):
             print(f'==There are {model_num} model instance ==')
             for k, v in self._model_insts.items():
                 for item in v:
-                    print(f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
+                    print(
+                        f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
 
     def run(self) -> None:
@@ -269,18 +272,23 @@ class Controller(multiprocessing.Process):
                 break
 
 
-class UserAgent(object):
+class UserAgent(multiprocessing.Process):
     """User agent is responsible for sending queries to the controller
 
     Args:
         cluster: the cluster that processing queries
-        _config: some running specification
+        config: some running specification
+        load: the current load
     """
 
-    def __init__(self, cluster: Cluster, config: Dict = None):
+    def __init__(self, cluster: Cluster, comm_pipe: multiprocessing.Pipe,
+                 config: Dict = None, load=0.1):
+        super().__init__()
+        self.comm_pipe = comm_pipe  # the pipe for communication with the view
         self.send_pipe = None
         self.cluster = cluster
         self._config = config
+        self.load = load
 
     def start_up(self):
         parent, child = multiprocessing.Pipe()
@@ -289,7 +297,7 @@ class UserAgent(object):
         controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._config['slo'])
         controller.start()
 
-    def querying(self, load, total_queries=10000):
+    def querying(self, total_queries=10000):
         """sending query request to the controller
 
         Args:
@@ -303,14 +311,27 @@ class UserAgent(object):
             req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
             self.g_queue.put(req)
-            # time.sleep(1000)
-            # print(f"request {r_id} have been sent.")
-            if r_id < 40:
-                time.sleep(random.expovariate(2))
-            elif r_id < 200:
-                time.sleep(random.expovariate(80))
+            if r_id < 100:
+                self.load = random.randint(5, 10)
+            elif r_id < 500:
+                self.load = random.randint(40, 60)
+            elif r_id < 1500:
+                self.load = random.randint(100, 120)
             else:
-                time.sleep(random.expovariate(1))
+                self.load = random.randint(10, 20)
+            time.sleep(random.expovariate(self.load))
+
+    def report(self, interval=1):
+        """report the current cluster status and load to view"""
+        while True:
+            self.comm_pipe.send((self.cluster, self.load))
+            time.sleep(interval)
+
+    def run(self) -> None:
+        self.start_up()
+        T = threading.Thread(target=self.report, args=(1, ))
+        T.start()
+        self.querying()
 
 
 def main():
@@ -333,21 +354,13 @@ def main():
     config = {
         'slo': 3,
     }
-    user_agent = UserAgent(cluster, config)
+    user_agent = UserAgent(cluster, None, config)
     user_agent.start_up()
-    user_agent.querying(load=5)
+    user_agent.querying()
 
 
 def test():
-    pqueue = queue.PriorityQueue()
-    for i in range(10):
-        req = Request(i, time.time(), random.randint(1, 10))
-        time.sleep(random.randint(1, 5))
-        pqueue.put(req)
-    pqueue.put(-1)
-
-    for _ in range(pqueue.qsize()):
-        print(pqueue.get())
+    pass
 
 
 if __name__ == '__main__':

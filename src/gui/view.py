@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 import functools
 import threading
@@ -13,6 +14,9 @@ import collections
 
 from matplotlib.backends.qt_compat import QtCore, QtWidgets
 
+from src.model.component import CpuGen, Node
+from src.schedule.scheduling import Cluster
+
 if QtCore.qVersion() >= "5.":
     from matplotlib.backends.backend_qt5agg import (
         FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
@@ -25,11 +29,18 @@ from src.model import component
 
 
 class MagnoneUi(QtWidgets.QMainWindow):
-    """Magnone's View (GUI)"""
+    """Magnone's View (GUI)
+    Attributes:
+        _cluster: the cluster consists of nodes its is responsible to show
+        comm_pipe: the communication pipe with the user agent
+    """
 
-    def __init__(self):
+    def __init__(self, cluster: Cluster, comm_pipe: multiprocessing.Pipe):
         """View initializer"""
         super(MagnoneUi, self).__init__()
+        self._load = 0.1
+        self._cluster = cluster
+        self.comm_pipe = comm_pipe
         self.setWindowTitle('磁探测')
         self.setFixedSize(1200, 1000)
         self._centralWidget = QtWidgets.QWidget(self)
@@ -40,6 +51,14 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._createCtrlButton()
         self._createLoadPanel()
         self._createNodesPanel()
+
+    @property
+    def cluster(self):
+        return self._cluster
+
+    @cluster.setter
+    def cluster(self, value):
+        self.cluster = value
 
     def _createMenu(self):
         self.menu = self.menuBar().addMenu("&Menu")
@@ -70,74 +89,85 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._load_ax.set_xticks([])
         self._load_line, = self._load_ax.plot(x, self._cur_load)
         self._load_timer = load_canvas.new_timer(900)
-        cur_load = random.randint(0, 100)
-        self._load_timer.add_callback(self._updateLoadPanel, cur_load)
+        self._load_timer.add_callback(self._updateLoadPanel)
         # self._load_timer.start()
 
-    def _updateLoadPanel(self, load):
+    def _updateLoadPanel(self):
         x = np.linspace(0, 100, 100)
-        # self._cur_load.append(random.randint(0, 100))
-        self._cur_load.append(load)
+        self._cur_load.append(self._load)
         self._load_line.set_data(x, self._cur_load)
         self._load_line.figure.canvas.draw()
 
-    def _createNodesPanel(self, init_pic='img/nodes0.png'):
-        """The panel shows the status of nodes saved in `init_pic`. """
-        # self.nodesPanel = QtWidgets.QLabel()
-        # self.nodesPanel.setFixedSize(1200, 600)
-        # pixmap = QtGui.QPixmap(init_pic)
-        # self.nodesPanel.setPixmap(pixmap)
-        # self.generalLayout.addWidget(self.nodesPanel)
+    def _createNodesPanel(self):
         nodes_canvas = FigureCanvas(Figure(figsize=(10, 8)))
         self.generalLayout.addWidget(nodes_canvas)
         self._nodes_ax = nodes_canvas.figure.subplots()
 
         self._G = nx.Graph()
         self._nodes = []
-        for i in range(20):
-            self._nodes.append(node.Node())
+        for c_node in self._cluster.nodes:
+            self._nodes.append(c_node)
 
-        self._edges = []
-        for i in range(20):
-            node_i = random.choice(self._nodes)
-            node_j = random.choice(self._nodes)
-            if node_i != node_j:
-                self._edges.append((node_i, node_j))
+        # self._edges = []
+        # for i in range(20):
+        #     node_i = random.choice(self._nodes)
+        #     node_j = random.choice(self._nodes)
+        #     if node_i != node_j:
+        #         self._edges.append((node_i, node_j))
         self._G.add_nodes_from(self._nodes)
-        self._G.add_edges_from(self._edges)
+        # self._G.add_edges_from(self._edges)
         self._nodes_pos = nx.spring_layout(self._G, k=1)
-        color_map = ['#33A6CC' if c_node.get_state() else 'gray'
+        color_map = ['#33A6CC' if c_node.activated else 'gray'
                      for c_node in self._nodes]
         nx.draw(self._G, ax=self._nodes_ax, pos=self._nodes_pos,
                 node_color=color_map)
         self._nodes_timer = nodes_canvas.new_timer(900)
         self._nodes_timer.add_callback(self._updateNodesPanel)
-        # self._nodes_timer.start()
 
     def _updateNodesPanel(self):
         self._nodes_ax.clear()
+        self._nodes = []
+        for c_node in self.cluster.nodes:
+            self._nodes.append(c_node)
         for _ in range(2):
-            random.choice(self._nodes).set_activated(True)
-            random.choice(self._nodes).set_activated(False)
-        # G = nx.petersen_graph()
-        color_map = ['#33A6CC' if c_node.get_state() else 'gray'
+            random.choice(self._nodes).activated = True
+            random.choice(self._nodes).activated = False
+        color_map = ['#33A6CC' if c_node.activated else 'gray'
                      for c_node in self._nodes]
         nx.draw(self._G, pos=self._nodes_pos, ax=self._nodes_ax,
                 node_color=color_map)
         self._nodes_ax.figure.canvas.draw()
 
-    def setNodePanelPic(self, pic: str):
-        pixmap = QtGui.QPixmap(pic)
-        pixmap = pixmap.scaled(self.loadPanel.width(), self.loadPanel.height())
-        self.nodesPanel.setPixmap(pixmap)
+    def set_load(self, load):
+        self._load = load
 
-    def setLoadPanelPic(self, pic: str):
-        pixmap = QtGui.QPixmap(pic)
-        pixmap = pixmap.scaled(self.loadPanel.width(), self.loadPanel.height())
-        self.loadPanel.setPixmap(pixmap)
+    def set_cluster(self, value):
+        self._cluster = value
+
+    def dynamic_load(self):
+        while True:
+            self.set_load(random.randint(1, 10))
+            time.sleep(1)
+
+    # def setNodePanelPic(self, pic: str):
+    #     pixmap = QtGui.QPixmap(pic)
+    #     pixmap = pixmap.scaled(self.loadPanel.width(), self.loadPanel.height())
+    #     self.nodesPanel.setPixmap(pixmap)
+    #
+    # def setLoadPanelPic(self, pic: str):
+    #     pixmap = QtGui.QPixmap(pic)
+    #     pixmap = pixmap.scaled(self.loadPanel.width(), self.loadPanel.height())
+    #     self.loadPanel.setPixmap(pixmap)
+    @property
+    def load_timer(self):
+        return self._load_timer
+
+    @property
+    def nodes_timer(self):
+        return self._nodes_timer
 
 
-class MagnoneCtrl:
+class MagnoneCtrl(object):
     """Magnone Controller class"""
 
     def __init__(self, view: MagnoneUi):
@@ -147,8 +177,8 @@ class MagnoneCtrl:
         self._connectSignals()
 
     def startSim(self):
-        self._view._load_timer.start()
-        self._view._nodes_timer.start()
+        self._view.load_timer.start()
+        self._view.nodes_timer.start()
         # self._simulating = True
         # updateLoadPanelT = threading.Thread(target=self._updateLoadPanel)
         # updateNodesPanelT = threading.Thread(target=self._updateNodesPanel)
@@ -158,8 +188,8 @@ class MagnoneCtrl:
         # updateLoadPanelT.start()
 
     def stopSim(self):
-        self._view._load_timer.stop()
-        self._view._nodes_timer.stop()
+        self._view.load_timer.stop()
+        self._view.nodes_timer.stop()
         """stop the two updating thread"""
         # self._simulating = False
         # for t in self.workerThreads:
@@ -202,9 +232,31 @@ class MagnoneCtrl:
         self._view.buttons['reset'].clicked.connect(self.resetSim)
 
 
+
+
+
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication([])
-    win = MagnoneUi()
+
+    cluster = Cluster()
+
+    node_specification = {
+        "desktop": (12, 8192, CpuGen.D,),
+        "laptop": (10, 4096, CpuGen.C,),
+        "phone": (8, 2048, CpuGen.B,),
+        "pi": (4, 2048, CpuGen.A,),
+    }
+    node_id = 1
+    for v in node_specification.values():
+        for _ in range(1):
+            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+            cluster.add_node(n)
+            node_id += 1
+    win = MagnoneUi(cluster=cluster, comm_pipe=None)
     win.show()
     magnoneCtrl = MagnoneCtrl(view=win)
-    sys.exit(app.exec())
+
+    T = threading.Thread(target=win.dynamic_load)
+    T.start()
+    app.exec()
