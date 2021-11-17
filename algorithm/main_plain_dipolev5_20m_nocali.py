@@ -751,8 +751,8 @@ def test_loc(location_func, sample_rate=1,):
 
     delta_ = velocity / sample_rate  # every data moving distance
 
-    x = np.arange(0, 15, 1)
-    y = np.arange(0, 15, 1)
+    x = np.arange(0, 5, 1)
+    y = np.arange(0, 5, 1)
 
     # 不同算法预测的位置向量
     ret_ = np.zeros((len(x) * len(y), 3 * nosample))
@@ -805,4 +805,4 @@ if __name__ == '__main__':
     t_start = time.perf_counter()
     # main(sample_rate)
     test_loc(location_funcs[args.task])
-    print(f"elapsed time: {(time.perf_counter() - t_start)*1000/225} ms")
+    print(f"elapsed time: {(time.perf_counter() - t_start)*1000/25} ms")

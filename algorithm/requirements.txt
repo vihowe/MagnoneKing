@@ -1,4 +1,4 @@
 numpy
 scipy
-torch
-torchvision
+torch==1.10.0+cpu
+torchvision==1.10.0+cpu
