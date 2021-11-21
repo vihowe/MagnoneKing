@@ -7,7 +7,10 @@ from collections import defaultdict
 
 import pandas as pd
 import numpy as np
+import sys
 
+
+sys.path.append('/home/vihowe/project/MagnoneKing/')
 from src.model.component import TaskType
 
 
@@ -45,7 +48,7 @@ def get_res_time(file_names):
         task_types.append(task_type)
 
     for node_id in file_names:
-        data = pd.read_csv(os.path.join('/Users/weihao/PycharmProjects/MagnoneKing/data', str(node_id)+'.csv'))
+        data = pd.read_csv(os.path.join('/home/vihowe/project/MagnoneKing/data', str(node_id)+'.csv'))
         for task in task_types:
             task_data = data[task.value == data['task']]
             r_t = get_fit_res(task_data)
@@ -71,7 +74,7 @@ def get_res_time(file_names):
 
 
 if __name__ == '__main__':
-    file_names = [0, 1, 2]
+    file_names = [1, 2, 3]
     res = get_res_time(file_names)
     print(res)
 

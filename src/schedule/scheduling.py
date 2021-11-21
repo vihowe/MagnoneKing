@@ -10,9 +10,10 @@ from typing import Tuple, Dict, List
 
 import sys
 
-import src.schedule.profiling as profiling
 
 sys.path.append('/home/vihowe/project/MagnoneKing/')
+import src.schedule.profiling as profiling
+
 
 from src.model.component import CpuGen, Node, ModelIns, Request, TaskType
 
@@ -105,7 +106,7 @@ class Controller(multiprocessing.Process):
         for k, v in ret.items():    # key: task; value: list[tuple]
             r = []
             for item in v:
-                r.append((nodes[item[0]], *item[1:]))
+                r.append((nodes[item[0]-1], item[1:]))
             rret[k] = r
         return rret
 
