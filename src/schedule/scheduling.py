@@ -10,6 +10,8 @@ from typing import Tuple, Dict, List
 
 import sys
 
+import src.schedule.profiling as profiling
+
 sys.path.append('/home/vihowe/project/MagnoneKing/')
 
 from src.model.component import CpuGen, Node, ModelIns, Request, TaskType
@@ -88,13 +90,25 @@ class Controller(multiprocessing.Process):
             when the task is deployed on it, and the estimated processing time.
         """
         # TODO read from profiled file to generate this data structure
-        ret = {}
+        # ret = {}
         nodes = self._cluster.nodes
-        for _, t_type in TaskType.__members__.items():
-            ordered_nodes = random.sample(nodes, k=len(nodes))
-            resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
-            ret[t_type] = list(zip(ordered_nodes, resource_cap))
-        return ret
+        nodes_id = []
+        for c_node in nodes:
+            nodes_id.append(c_node.node_id)
+        # for _, t_type in TaskType.__members__.items():
+        #     ordered_nodes = random.sample(nodes, k=len(nodes))
+        #     resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
+        #     ret[t_type] = list(zip(ordered_nodes, resource_cap))
+        # return ret
+        ret = profiling.get_res_time(nodes_id)
+        rret = {}
+        for k, v in ret.items():    # key: task; value: list[tuple]
+            r = []
+            for item in v:
+                r.append((nodes[item[0]], *item[1:]))
+            rret[k] = r
+        return rret
+
 
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and

@@ -1,4 +1,3 @@
-import numpy as np
 from dipoleMathplain import *
 from LocationStarv2 import *
 

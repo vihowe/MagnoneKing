@@ -18,6 +18,7 @@ def update(win, p0):
         win.set_load(load)
         win.set_cluster(cluster)
 
+
 def simulate():
     app = QtWidgets.QApplication([])
 
@@ -54,6 +55,5 @@ def simulate():
 
 
 if __name__ == '__main__':
+    multiprocessing.set_start_method('fork')
     simulate()
-
-

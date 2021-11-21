@@ -1,6 +1,5 @@
 import numpy as np
 import sys
-from scipy.io import loadmat
 from dipoleMathplain import *
 from LocationStarv2 import *
 from models import *
