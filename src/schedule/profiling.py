@@ -45,7 +45,7 @@ def get_res_time(file_names):
         task_types.append(task_type)
 
     for node_id in file_names:
-        data = pd.read_csv(os.path.join('../../data', str(node_id)+'.csv'))
+        data = pd.read_csv(os.path.join('/Users/weihao/PycharmProjects/MagnoneKing/data', str(node_id)+'.csv'))
         for task in task_types:
             task_data = data[task.value == data['task']]
             r_t = get_fit_res(task_data)

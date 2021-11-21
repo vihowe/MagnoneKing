@@ -371,13 +371,12 @@ def main():
 
     node_specification = {
         "desktop": (12, 8192, CpuGen.D,),
-        "laptop": (10, 4096, CpuGen.C,),
-        "phone": (8, 2048, CpuGen.B,),
         "pi": (4, 2048, CpuGen.A,),
+        "laptop": (10, 4096, CpuGen.C,),
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(4):
+        for _ in range(1):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1

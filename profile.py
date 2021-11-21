@@ -8,7 +8,7 @@ if __name__ == '__main__':
     cpu_quotas = np.arange(20000, 220000, 20000)
     mem_quotas = np.arange(40, 240, 20)
     task_type = [0, 1, 2, 3]
-    with open('data/0.csv', 'w+') as f:
+    with open('data/1.csv', 'w+') as f:
         csv_writer = csv.writer(f)
         csv_writer.writerow(
             ['task', 'cpu_quota', 'mem_quota', 'running time', 'overhead'])
