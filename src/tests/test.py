@@ -1,66 +1,39 @@
-import sys
+import multiprocessing
+import os
 import time
-import networkx
-import networkx as nx
-
-import numpy as np
-
-from matplotlib.backends.qt_compat import QtCore, QtWidgets
-if QtCore.qVersion() >= "5.":
-    from matplotlib.backends.backend_qt5agg import (
-        FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
-else:
-    from matplotlib.backends.backend_qt4agg import (
-        FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
-from matplotlib.figure import Figure
 
 
-class ApplicationWindow(QtWidgets.QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self._main = QtWidgets.QWidget()
-        self.setCentralWidget(self._main)
-        layout = QtWidgets.QVBoxLayout(self._main)
+class MainProcess:
+    def __init__(self, main_process_time, child_process_time):
+        self.main_process_time = main_process_time
+        self.child_process_time = child_process_time
 
-        static_canvas = FigureCanvas(Figure(figsize=(5, 3)))
-        layout.addWidget(static_canvas)
-        # self.addToolBar(NavigationToolbar(static_canvas, self))
-
-        dynamic_canvas = FigureCanvas(Figure(figsize=(5, 3)))
-        layout.addWidget(dynamic_canvas)
-        # self.addToolBar(QtCore.Qt.BottomToolBarArea,
-        #                 NavigationToolbar(dynamic_canvas, self))
-
-        self._static_ax = static_canvas.figure.subplots()
-        G = nx.petersen_graph()
-        nx.draw(G, ax=self._static_ax, with_labels=True)
-        # t = np.linspace(0, 10, 501)
-        # self._static_ax.plot(t, np.tan(t), ".")
-
-        self._dynamic_ax = dynamic_canvas.figure.subplots()
-        t = np.linspace(0, 10, 101)
-        # Set up a Line2D.
-        self._line,  = self._dynamic_ax.plot(t, np.sin(t + time.time()))
-        self._timer = dynamic_canvas.new_timer(50)
-        self._timer.add_callback(self._update_canvas)
-        self._timer.start()
-
-    def _update_canvas(self):
-        t = np.linspace(0, 10, 101)
-        # Shift the sinusoid as a function of time.
-        self._line.set_data(t, np.sin(t + time.time()))
-        self._line.figure.canvas.draw()
+    def excutor(self):
+        print('main process begin, pid={0}, ppid={1}'.format(os.getpid(), os.getppid()))
+        p = ChildProcess(self.child_process_time)
+        p.start()
+        # p.join()
+        for i in range(self.main_process_time):
+            print('main process, pid={0}, ppid={1}, times={2}'.format(os.getpid(), os.getppid(), i))
+            time.sleep(1)
+        print('main process end, pid={0}, ppid={1}'.format(os.getpid(), os.getppid()))
 
 
-if __name__ == "__main__":
-    # Check whether there is already a running QApplication (e.g., if running
-    # from an IDE).
-    qapp = QtWidgets.QApplication.instance()
-    if not qapp:
-        qapp = QtWidgets.QApplication(sys.argv)
+class ChildProcess(multiprocessing.Process):
+    def __init__(self, process_time):
+        multiprocessing.Process.__init__(self)
+        self.process_time = process_time
 
-    app = ApplicationWindow()
-    app.show()
-    app.activateWindow()
-    app.raise_()
-    qapp.exec_()
+    def run(self):
+        print('child process begin, pid={0}, ppid={1}'.format(os.getpid(), os.getppid()))
+        for i in range(self.process_time):
+            print('child process pid={0}, ppid={1}, times={2}'.format(os.getpid(), os.getppid(), i))
+            time.sleep(1)
+        print('child process end, pid={0}, ppid={1}'.format(os.getpid(), os.getppid()))
+
+
+if __name__ == '__main__':
+    main_process_time = 5
+    child_process_time = 10
+    action = MainProcess(main_process_time, child_process_time)
+    action.excutor()

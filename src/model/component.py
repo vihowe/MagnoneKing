@@ -3,7 +3,10 @@ import queue
 from enum import Enum
 import time
 from typing import MutableMapping
+import logging
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class Request(object):
     """magnetic detection request"""
@@ -61,10 +64,10 @@ class Request(object):
 
 class CpuGen(Enum):
     """four types of processing node"""
-    A = 100
-    B = 200
-    C = 300
-    D = 400
+    A = 1
+    B = 2
+    C = 3
+    D = 4
 
 
 class TaskType(Enum):
@@ -95,6 +98,10 @@ class Node(object):
         self._free_mem = mem
         self._core_gen = core_gen
         self._activated = activated
+
+    @property
+    def core_gen(self):
+        return self._core_gen
 
     @property
     def cores(self):
@@ -134,6 +141,18 @@ class Node(object):
     @free_mem.setter
     def free_mem(self, value):
         self._free_mem = value
+
+
+class Cluster(object):
+    def __init__(self):
+        self._nodes = []
+
+    def add_node(self, c_node: Node):
+        self._nodes.append(c_node)
+
+    @property
+    def nodes(self):
+        return self._nodes
 
 
 class ModelIns(multiprocessing.Process):
@@ -236,7 +255,7 @@ class ModelIns(multiprocessing.Process):
 
             req: Request
             if req.r_id != -1:
-                time.sleep(self._t_cost)
+                time.sleep(self._t_cost/1000)
                 req.t_end = time.perf_counter()
 
                 self._ret_queue.put(req)    # store the result back
@@ -251,5 +270,5 @@ class ModelIns(multiprocessing.Process):
                 with self._t_last.get_lock():
                     self._t_last.value = time.time()
             else:
-                print(f"Model Instance {self} has exited")
+                logger.info(f"Get -1, Model Instance {self} has exited")
                 break

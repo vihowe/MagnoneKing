@@ -5,6 +5,7 @@ import time
 import multiprocessing
 import random
 import bisect
+import logging
 
 from typing import Tuple, Dict, List
 
@@ -15,19 +16,7 @@ sys.path.append('/home/vihowe/project/MagnoneKing/')
 import src.schedule.profiling as profiling
 
 
-from src.model.component import CpuGen, Node, ModelIns, Request, TaskType
-
-
-class Cluster(object):
-    def __init__(self):
-        self._nodes = []
-
-    def add_node(self, c_node: Node):
-        self._nodes.append(c_node)
-
-    @property
-    def nodes(self):
-        return self._nodes
+from src.model.component import CpuGen, Node, ModelIns, Request, TaskType, Cluster
 
 
 def report_lat(ret_queue: multiprocessing.Queue, interval=5):
@@ -39,14 +28,18 @@ def report_lat(ret_queue: multiprocessing.Queue, interval=5):
     while True:
         req: Request
         req = ret_queue.get()
-        ret_dict[req.r_id].append(req.t_end - req.t_arri)
-        if len(ret_dict[req.r_id]) == len(TaskType.__members__):
-            avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
-            if time.time() - t_start >= interval:
-                print(f'***************avg latency: {avg_lat}*******************')
-                t_start = time.time()
-            req_num += 1
-            ret_dict.pop(req.r_id)
+        if isinstance(req, Request):
+            ret_dict[req.r_id].append(req.t_end - req.t_arri)
+            if len(ret_dict[req.r_id]) == len(TaskType.__members__):
+                avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
+                if time.time() - t_start >= interval:
+                    logging.info(f'finished {req_num}requests, avg latency: {avg_lat}')
+                    t_start = time.time()
+                req_num += 1
+                ret_dict.pop(req.r_id)
+        # else:     # TODO why if this process exit, the model instance cannot receive another request
+        #     logging.debug('report avg latency process exit')
+        #     break
 
 
 class Controller(multiprocessing.Process):
@@ -90,18 +83,13 @@ class Controller(multiprocessing.Process):
             with the appropriate amount of resource (#cpus, mem)
             when the task is deployed on it, and the estimated processing time.
         """
-        # TODO read from profiled file to generate this data structure
-        # ret = {}
         nodes = self._cluster.nodes
-        nodes_id = []
-        for c_node in nodes:
-            nodes_id.append(c_node.node_id)
         # for _, t_type in TaskType.__members__.items():
         #     ordered_nodes = random.sample(nodes, k=len(nodes))
         #     resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
         #     ret[t_type] = list(zip(ordered_nodes, resource_cap))
         # return ret
-        ret = profiling.get_res_time(nodes_id)
+        ret = profiling.get_res_time(self._cluster)
         rret = {}
         for k, v in ret.items():    # key: task; value: list[tuple]
             r = []
@@ -119,21 +107,20 @@ class Controller(multiprocessing.Process):
             t_type: the type of task to process
 
         Return:
-            return None if all the instances' relative load exceed the threshold
+            (best_candidate_node, if_need_new_instance)
         """
         if len(self._model_insts[t_type]) == 0:
             return None
         r_load = [(pow((model.queue_size.value + model.requeue.qsize()), 2)
                    + (model.queue_size.value + model.requeue.qsize())) / 2
                   * model.t_cost for model in self._model_insts[t_type]]
-        # print(r_load)
 
-        slo_load = self._threshold * self._slo
         rr = sorted(r_load)
+        slo_load = self._threshold * self._slo
         a = bisect.bisect_left(rr, slo_load)  # the qualified relative load candidate
         if a == 0:
-            return None
-        return self._model_insts[t_type][r_load.index(rr[a - 1])]
+            return self._model_insts[t_type][r_load.index(rr[0])], True
+        return self._model_insts[t_type][r_load.index(rr[a - 1])], False
 
         # min_r = min(range(len(r_load)), key=r_load.__getitem__)
         # if r_load[min_r] >= self._threshold * self._slo:
@@ -150,13 +137,13 @@ class Controller(multiprocessing.Process):
         Return:
             (Node, estimated_time): an appropriate node to bear this model instance
                 and its resource allocation and estimated processing time for running this task
+                if there are no free resource, return None
         """
-        # print(self._task_affinity[task_type])
         for c_node, item in self._task_affinity[task_type]:
 
             if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
                 return (c_node, item)
-        # TODO what if all resource are run out
+        return None, None
         # for c_node in self._cluster.nodes:
         #     if not c_node.activated:
         #         return c_node
@@ -166,16 +153,6 @@ class Controller(multiprocessing.Process):
         # print(scores)
         # return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
-    def find_resource(self, c_node: Node, task_type: TaskType) -> Tuple[int, int, float]:
-        """return the just enough resource when model is deployed on `c_node`
-        and the model instance's capability. (processing time per query)
-
-        Args:
-            c_node: the node which have the model instance
-            task_type: the type of this model instance
-        """
-        # TODO find the just enough resource allocated to this model instance
-        return 1, 100, 1.
 
     def deploy_model_inst(self, task_type: TaskType) -> ModelIns:
         """deploy a new model instance which processing `task_type` task
@@ -183,10 +160,15 @@ class Controller(multiprocessing.Process):
 
         Args:
             task_type: the type of this model instance
+        
+        Return:
+            return a new model instance, if no free resource to build one, return None.
         """
 
         # find an appropriate node and resource amount
         c_node, resource_allo = self.find_light_node(task_type)
+        if c_node is None:
+            return None
         # print(c_node, resource_allo)
         # time.sleep(3)
         # cores, mem, cap = self.find_resource(c_node, task_type)
@@ -215,10 +197,12 @@ class Controller(multiprocessing.Process):
 
         # dispatch this request to all four types of tasks simultaneously
         for _, t_type in TaskType.__members__.items():
-            a_model_inst = self.find_model_inst(t_type)
-            if a_model_inst is None:  # all the model instances are under peak load
-                a_model_inst = self.deploy_model_inst(t_type)
-            # print(f'****request {req} is sent to {a_model_inst}')
+            a_model_inst, new_flag = self.find_model_inst(t_type)
+            if new_flag is True:  # all the model instances are under peak load
+                new_model_ins = self.deploy_model_inst(t_type)
+                if new_model_ins is not None:
+                    a_model_inst = new_model_ins
+
             a_model_inst.requeue.put(req)
 
     def monitoring(self, timeout=5, interval=5):
@@ -255,12 +239,11 @@ class Controller(multiprocessing.Process):
             model_num = 0
             for k, v in self._model_insts.items():
                 model_num += len(v)
-            print(f'==There are {model_num} model instance ==')
+            logging.info(f'There are {model_num} model instance serving')
             for k, v in self._model_insts.items():
                 for item in v:
-                    pass
-                    # print(
-                        # f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
+                    logging.info(
+                        f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
 
     def report_cluster(self):
@@ -277,15 +260,15 @@ class Controller(multiprocessing.Process):
         for _, t_type in TaskType.__members__.items():
             self.deploy_model_inst(t_type)
         # start the monitor thread
-        monitor = threading.Thread(target=self.monitoring, args=(60, 30))
+        monitor = threading.Thread(target=self.monitoring, args=(10, 10), daemon=True)
         monitor.start()
 
         # start the report thread
-        reporter = threading.Thread(target=self.report, args=(10,))
+        reporter = threading.Thread(target=self.report, args=(5,), daemon=True)
         reporter.start()
 
-        T_report_cluster = threading.Thread(target=self.report_cluster)
-        T_report_cluster.start()
+        # T_report_cluster = threading.Thread(target=self.report_cluster)
+        # T_report_cluster.start()
 
         # start report avg latency process
         p = multiprocessing.Process(target=report_lat, args=(self.ret_queue,), daemon=True)
@@ -297,6 +280,9 @@ class Controller(multiprocessing.Process):
             if isinstance(req, Request):
                 self.dispatch(req)
             else:
+                self.ret_queue.put(-1)
+                logging.debug('receieved the stop signal')
+                p.join()
                 break
 
 
@@ -313,7 +299,7 @@ class UserAgent(multiprocessing.Process):
                  config: Dict = None, load=0.1):
         super().__init__()
         self.comm_pipe = comm_pipe  # the pipe for communication with the view
-        self.send_pipe = None
+        self.send_pipe = None   # the pipe for communication with the controller
         self.cluster = cluster
         self._run_config = config
         self.load = load
@@ -325,7 +311,7 @@ class UserAgent(multiprocessing.Process):
         controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'])
         controller.start()
 
-    def querying(self, total_queries=1600):
+    def querying(self, total_queries=1050):
         """sending query request to the controller
 
         Args:
@@ -336,6 +322,7 @@ class UserAgent(multiprocessing.Process):
         while True:
             if r_id == total_queries:
                 self.load = 0
+                self.g_queue.put(-1)    # inform the controller to exit
                 break
             req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
@@ -343,11 +330,12 @@ class UserAgent(multiprocessing.Process):
             if r_id < 100:
                 self.load = random.randint(5, 10)
             elif r_id < 500:
+                self.load = random.randint(20, 40)
+            elif r_id < 1000:
                 self.load = random.randint(40, 60)
-            elif r_id < 1500:
-                self.load = random.randint(200, 220)
             else:
                 self.load = random.randint(1, 10)
+            # self.load = 1
             time.sleep(random.expovariate(self.load))
 
     def report(self, interval=1):
@@ -361,9 +349,10 @@ class UserAgent(multiprocessing.Process):
 
     def run(self) -> None:
         self.start_up()
-        T = threading.Thread(target=self.report, args=(1, ))
-        T.start()
+        # T = threading.Thread(target=self.report, args=(1, ))
+        # T.start()
         self.querying()
+        logging.debug('querying finished')
 
 
 def main():
@@ -371,13 +360,13 @@ def main():
     cluster = Cluster()
 
     node_specification = {
-        "desktop": (12, 8192, CpuGen.D,),
-        "pi": (4, 2048, CpuGen.A,),
-        "laptop": (10, 4096, CpuGen.C,),
+        "desktop": (8, 8192, CpuGen.A,),
+        "laptop": (4, 4096, CpuGen.B,),
+        "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(1):
+        for _ in range(2):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
@@ -390,6 +379,7 @@ def main():
     # user_agent.querying()
     user_agent.start()
     user_agent.join()
+    logging.debug('user agent exit')
     # user_agent.run()
 
 
@@ -399,4 +389,12 @@ def test():
 
 if __name__ == '__main__':
     # test()
+    root = logging.getLogger()
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s %(processName)-8s %(name)s %(levelname)-6s %(message)s')
+    console_handler.setFormatter(formatter)
+    root.addHandler(console_handler)
+    root.setLevel(logging.DEBUG)
+
+
     main()

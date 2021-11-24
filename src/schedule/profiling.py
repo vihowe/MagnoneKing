@@ -11,7 +11,7 @@ import sys
 
 
 sys.path.append('/home/vihowe/project/MagnoneKing/')
-from src.model.component import TaskType
+from src.model.component import CpuGen, Node, TaskType, Cluster
 
 
 def get_fit_res(data):
@@ -19,24 +19,21 @@ def get_fit_res(data):
     weight = 50
     threshold = 0.8
     data['total_time'] = data['running time'] * weight + data['overhead']
-    for mem_quota in np.arange(40, 240, 20):
-        m = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['mem_quota'].tolist()
-        d = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['total_time'].tolist()
-        t = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['running time'].tolist()
-        for i in range(len(d)):
-            if d[i+1] / d[i] > threshold:
-                mem = m[i]
-                running_time = t[i]
-                break
+
+    m = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['mem_quota'].tolist()
+    d = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['total_time'].tolist()
+    t = data[(data['cpu_quota'] == 100000) | (data['cpu_quota'] == 1)]['running time'].tolist()
+    for i in range(len(d)):
+        if d[i+1] / d[i] > threshold:
+            mem = m[i]
+            running_time = t[i]
+            break
 
     return 1, mem, running_time
 
 
-def get_res_time(file_names):
+def get_res_time(cluster: Cluster):
     """return the resource-time table for each (task, node) pair
-
-    Args:
-        file_names: actually representing the node's id
 
     Return:
         res[task_id]: a list of (node_id, cpu_quota, mem_quota, running_time) in descending order of affinity priority
@@ -46,18 +43,23 @@ def get_res_time(file_names):
     task_types = []
     for _, task_type in TaskType.__members__.items():
         task_types.append(task_type)
+    
+    nodes = cluster.nodes
 
-    for node_id in file_names:
-        data = pd.read_csv(os.path.join('/home/vihowe/project/MagnoneKing/data', str(node_id)+'.csv'))
+    for c_node in nodes:
+        cpu_gen: CpuGen
+        cpu_gen = c_node.core_gen
+        data = pd.read_csv(os.path.join('/home/vihowe/project/MagnoneKing/data', str(cpu_gen.value)+'.csv'))
         for task in task_types:
             task_data = data[task.value == data['task']]
             r_t = get_fit_res(task_data)
-            task_dics[task.value][node_id] = (node_id, *r_t)
+            task_dics[task.value][c_node.node_id] = (c_node.node_id, *r_t)
 
     res = {}
     for task in task_types:
+        reverse = True if task == TaskType.A or task == TaskType.C else False
         vs = list(task_dics[task.value].values())
-        vs = sorted(vs, key=lambda x: x[-1])
+        vs = sorted(vs, key=lambda x: x[-1], reverse=reverse)
         res[task] = vs
 
     return res
@@ -74,8 +76,21 @@ def get_res_time(file_names):
 
 
 if __name__ == '__main__':
-    file_names = [1, 2, 3]
-    res = get_res_time(file_names)
+    cluster = Cluster()
+
+    node_specification = {
+        "desktop": (12, 8192, CpuGen.A,),
+        "laptop": (10, 4096, CpuGen.B,),
+        "pi": (4, 2048, CpuGen.C,),
+    }
+    node_id = 1
+    for v in node_specification.values():
+        for _ in range(2):
+            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+            cluster.add_node(n)
+            node_id += 1
+    
+    res = get_res_time(cluster)
     print(res)
 
 
