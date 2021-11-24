@@ -267,8 +267,8 @@ class Controller(multiprocessing.Process):
         reporter = threading.Thread(target=self.report, args=(5,), daemon=True)
         reporter.start()
 
-        # T_report_cluster = threading.Thread(target=self.report_cluster)
-        # T_report_cluster.start()
+        T_report_cluster = threading.Thread(target=self.report_cluster)
+        T_report_cluster.start()
 
         # start report avg latency process
         p = multiprocessing.Process(target=report_lat, args=(self.ret_queue,), daemon=True)
@@ -349,8 +349,8 @@ class UserAgent(multiprocessing.Process):
 
     def run(self) -> None:
         self.start_up()
-        # T = threading.Thread(target=self.report, args=(1, ))
-        # T.start()
+        T = threading.Thread(target=self.report, args=(1, ))
+        T.start()
         self.querying()
         logging.debug('querying finished')
 
@@ -365,14 +365,24 @@ def main():
         "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
-    for v in node_specification.values():
-        for _ in range(2):
-            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
-            cluster.add_node(n)
-            node_id += 1
+    # for v in node_specification.values():
+    #     for _ in range(2):
+    #         n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+    #         cluster.add_node(n)
+    #         node_id += 1
+    s1 = node_specification['laptop']
+    s2 = node_specification['pi']
+    for _ in range(2):
+        n = Node(node_id=node_id, cores=s1[0], mem=s1[1], core_gen=s1[2])
+        cluster.add_node(n)
+        node_id += 1
+    for _ in range(6):
+        n = Node(node_id=node_id, cores=s2[0], mem=s2[1], core_gen=s2[2])
+        cluster.add_node(n)
+        node_id += 1
 
     config = {
-        'slo': 3,
+        'slo': 1,
     }
     user_agent = UserAgent(cluster, None, config)
     # user_agent.start_up()

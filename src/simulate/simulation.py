@@ -11,10 +11,13 @@ from src.gui.view import MagnoneUi, MagnoneCtrl
 from src.model.component import CpuGen, Node
 from src.schedule.scheduling import Cluster, UserAgent
 
+import logging
+
 
 def update(win, p0):
     while True:
         cluster, load = p0.recv()
+        logging.info(f'cluster:{cluster}, load: {load}')
         win.set_load(load)
         win.set_cluster(cluster)
 
@@ -25,17 +28,18 @@ def simulate():
     cluster = Cluster()
 
     node_specification = {
-        "desktop": (12, 8192, CpuGen.D,),
-        "laptop": (10, 4096, CpuGen.C,),
-        "phone": (8, 2048, CpuGen.B,),
-        "pi": (4, 2048, CpuGen.A,),
+        "desktop": (8, 8192, CpuGen.A,),
+        "laptop": (4, 4096, CpuGen.B,),
+        "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
     for v in node_specification.values():
-        for _ in range(5):
+        for _ in range(2):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
+
+
     p0, p1 = multiprocessing.Pipe()
     win = MagnoneUi(cluster=cluster, comm_pipe=p0)
     win.show()
@@ -46,14 +50,19 @@ def simulate():
     config = {
         'slo': 3,
     }
+    # user agent need to report the load and cluster status to the view
     user_agent = UserAgent(cluster, comm_pipe=p1, config=config)
+    
     user_agent.start()
 
     T = threading.Thread(target=update, args=(win, p0))
     T.start()
+    
     sys.exit(app.exec())
+    
 
 
 if __name__ == '__main__':
     multiprocessing.set_start_method('fork')
+    logging.basicConfig(level=logging.INFO)
     simulate()
