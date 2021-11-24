@@ -76,19 +76,34 @@ def get_res_time(cluster: Cluster):
 
 
 if __name__ == '__main__':
+
     cluster = Cluster()
 
     node_specification = {
-        "desktop": (12, 8192, CpuGen.A,),
-        "laptop": (10, 4096, CpuGen.B,),
-        "pi": (4, 2048, CpuGen.C,),
+        "desktop": (8, 8192, CpuGen.A,),
+        "laptop": (4, 4096, CpuGen.B,),
+        "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
-    for v in node_specification.values():
-        for _ in range(2):
-            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
-            cluster.add_node(n)
-            node_id += 1
+    # for v in node_specification.values():
+    #     for _ in range(2):
+    #         n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+    #         cluster.add_node(n)
+    #         node_id += 1
+    s1 = node_specification['laptop']
+    s2 = node_specification['pi']
+    for _ in range(2):
+        n = Node(node_id=node_id, cores=s1[0], mem=s1[1], core_gen=s1[2])
+        cluster.add_node(n)
+        node_id += 1
+    for _ in range(6):
+        n = Node(node_id=node_id, cores=s2[0], mem=s2[1], core_gen=s2[2])
+        cluster.add_node(n)
+        node_id += 1
+
+    config = {
+        'slo': 1,
+    }
     
     res = get_res_time(cluster)
     print(res)

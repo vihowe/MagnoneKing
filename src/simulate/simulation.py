@@ -16,10 +16,11 @@ import logging
 
 def update(win, p0):
     while True:
-        cluster, load = p0.recv()
+        cluster, load, avg_latency = p0.recv()
         logging.info(f'cluster:{cluster}, load: {load}')
         win.set_load(load)
         win.set_cluster(cluster)
+        win.set_avg_latency(avg_latency)
 
 
 def simulate():
@@ -33,11 +34,25 @@ def simulate():
         "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
-    for v in node_specification.values():
-        for _ in range(2):
-            n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
-            cluster.add_node(n)
-            node_id += 1
+    # for v in node_specification.values():
+    #     for _ in range(2):
+    #         n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
+    #         cluster.add_node(n)
+    #         node_id += 1
+    s1 = node_specification['laptop']
+    s2 = node_specification['pi']
+    for _ in range(2):
+        n = Node(node_id=node_id, cores=s1[0], mem=s1[1], core_gen=s1[2])
+        cluster.add_node(n)
+        node_id += 1
+    for _ in range(6):
+        n = Node(node_id=node_id, cores=s2[0], mem=s2[1], core_gen=s2[2])
+        cluster.add_node(n)
+        node_id += 1
+
+    config = {
+        'slo': 1,
+    }
 
 
     p0, p1 = multiprocessing.Pipe()

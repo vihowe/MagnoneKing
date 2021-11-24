@@ -53,6 +53,7 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._createCtrlButton()
         self._createLoadPanel()
         self._createNodesPanel()
+        self._avg_latency = 0.0
 
     @property
     def cluster(self):
@@ -95,9 +96,15 @@ class MagnoneUi(QtWidgets.QMainWindow):
         # self._load_timer.start()
 
     def _updateLoadPanel(self):
+        self._load_ax.cla()
         x = np.linspace(0, 100, 100)
         self._cur_load.append(self._load)
-        self._load_line.set_data(x, self._cur_load)
+        y_max = max(100, self._load * 2)
+        self._load_ax.set_ylim(0, y_max)
+        self._load_ax.set_xlim(0, 100)
+        # self._load_line.set_data(x, self._cur_load)
+        self._load_ax.plot(x, self._cur_load)
+        self._load_ax.set_title(f'avg latency: {self._avg_latency:.3f}')
         self._load_line.figure.canvas.draw()
 
     def _createNodesPanel(self):
@@ -145,6 +152,9 @@ class MagnoneUi(QtWidgets.QMainWindow):
 
     def set_cluster(self, value):
         self._cluster = value
+    
+    def set_avg_latency(self, value):
+        self._avg_latency = value
 
     def dynamic_load(self):
         while True:
@@ -245,8 +255,6 @@ class MagnoneCtrl(object):
         self._view.buttons['start'].clicked.connect(self.startSim)
         self._view.buttons['stop'].clicked.connect(self.stopSim)
         self._view.buttons['reset'].clicked.connect(self.resetSim)
-
-
 
 
 

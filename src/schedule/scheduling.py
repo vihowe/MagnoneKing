@@ -19,8 +19,12 @@ import src.schedule.profiling as profiling
 from src.model.component import CpuGen, Node, ModelIns, Request, TaskType, Cluster
 
 
-def report_lat(ret_queue: multiprocessing.Queue, interval=5):
-    """report the avg latency of all finished queries"""
+def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Value, interval=1):
+    """report the avg latency of all finished queries
+    Args:
+        ret_queue: get all finished request from model instances
+        avg_latency: the average latency shared with the controller
+    """
     ret_dict = collections.defaultdict(list)
     avg_lat = 0.
     req_num = 0
@@ -32,6 +36,7 @@ def report_lat(ret_queue: multiprocessing.Queue, interval=5):
             ret_dict[req.r_id].append(req.t_end - req.t_arri)
             if len(ret_dict[req.r_id]) == len(TaskType.__members__):
                 avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
+                avg_latency.value = avg_lat   # update the shared value
                 if time.time() - t_start >= interval:
                     logging.info(f'finished {req_num}requests, avg latency: {avg_lat}')
                     t_start = time.time()
@@ -70,6 +75,7 @@ class Controller(multiprocessing.Process):
         self.send_pipe_dic = {}  # send request to appropriate model instance
         self.ret_queue = multiprocessing.Queue()
         self._task_affinity = None
+        self.avg_lat = multiprocessing.Value('d', 0.0)
 
     @property
     def slo(self):
@@ -250,7 +256,7 @@ class Controller(multiprocessing.Process):
         while True:
             msg = self.recv_pipe.recv()
             if msg == 'cluster':
-                self.recv_pipe.send(self._cluster)
+                self.recv_pipe.send((self._cluster, self.avg_lat.value))
 
 
     def run(self) -> None:
@@ -259,6 +265,7 @@ class Controller(multiprocessing.Process):
         self._task_affinity = self.profile()
         for _, t_type in TaskType.__members__.items():
             self.deploy_model_inst(t_type)
+
         # start the monitor thread
         monitor = threading.Thread(target=self.monitoring, args=(10, 10), daemon=True)
         monitor.start()
@@ -267,11 +274,11 @@ class Controller(multiprocessing.Process):
         reporter = threading.Thread(target=self.report, args=(5,), daemon=True)
         reporter.start()
 
-        T_report_cluster = threading.Thread(target=self.report_cluster)
+        T_report_cluster = threading.Thread(target=self.report_cluster, daemon=True)
         T_report_cluster.start()
 
         # start report avg latency process
-        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue,), daemon=True)
+        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue, self.avg_lat), daemon=True)
         p.start()
 
         # start dispatching user queries
@@ -342,9 +349,9 @@ class UserAgent(multiprocessing.Process):
         """report the current cluster status and load to view"""
         while True:
             self.send_pipe.send('cluster')
-            clu = self.send_pipe.recv()
+            clu, avg_latency = self.send_pipe.recv()
             # print(clu.nodes, self.load)
-            self.comm_pipe.send((clu, self.load))
+            self.comm_pipe.send((clu, self.load, avg_latency))
             time.sleep(interval)
 
     def run(self) -> None:
