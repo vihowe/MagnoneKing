@@ -16,11 +16,12 @@ import logging
 
 def update(win, p0):
     while True:
-        cluster, load, avg_latency = p0.recv()
-        logging.info(f'cluster:{cluster}, load: {load}')
+        cluster, load, avg_latency, instant_latency = p0.recv()
+        logging.info(f'cluster:{cluster}, load: {load}, avg_latency: {avg_latency}, instant latency: {instant_latency}')
         win.set_load(load)
         win.set_cluster(cluster)
         win.set_avg_latency(avg_latency)
+        win.set_instant_latency(instant_latency)
 
 
 def simulate():
@@ -46,11 +47,11 @@ def simulate():
         # n = Node(node_id=node_id, cores=s0[0], mem=s0[1], core_gen=s0[2])
         # cluster.add_node(n)
         # node_id += 1
-    for _ in range(6):
+    for _ in range(2):
         n = Node(node_id=node_id, cores=s1[0], mem=s1[1], core_gen=s1[2])
         cluster.add_node(n)
         node_id += 1
-    for _ in range(12):
+    for _ in range(18):
         n = Node(node_id=node_id, cores=s2[0], mem=s2[1], core_gen=s2[2])
         cluster.add_node(n)
         node_id += 1
