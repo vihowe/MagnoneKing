@@ -318,7 +318,7 @@ class UserAgent(multiprocessing.Process):
         controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'])
         controller.start()
 
-    def querying(self, total_queries=1050):
+    def querying(self, total_queries=3050):
         """sending query request to the controller
 
         Args:
@@ -336,10 +336,10 @@ class UserAgent(multiprocessing.Process):
             self.g_queue.put(req)
             if r_id < 100:
                 self.load = random.randint(5, 10)
-            elif r_id < 500:
-                self.load = random.randint(20, 40)
             elif r_id < 1000:
-                self.load = random.randint(40, 60)
+                self.load = random.randint(20, 40)
+            elif r_id < 2000:
+                self.load = random.randint(60, 80)
             else:
                 self.load = random.randint(1, 10)
             # self.load = 1

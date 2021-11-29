@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import PyQt5.QtGui as QtGui
 import random
 import collections
+import math
 
 from matplotlib.backends.qt_compat import QtCore, QtWidgets
 
@@ -106,16 +107,109 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._load_ax.plot(x, self._cur_load)
         self._load_ax.set_title(f'avg latency: {self._avg_latency:.3f}')
         self._load_line.figure.canvas.draw()
+    
+    
+    def draw_nodes(self):
+        nodes_dict = collections.defaultdict(list)
+
+        for c_node in self._cluster.nodes:
+            nodes_dict[c_node.core_gen].append(c_node)
+        
+        self.marker_dict = {
+            CpuGen.A: 'H',
+            CpuGen.B: 'p',
+            CpuGen.C: 'D',
+            CpuGen.D: 'o',
+        }
+        
+        node_size = len(self._cluster.nodes)
+        l = int(math.sqrt(node_size) + 1)
+
+        self.node_pos_dic = collections.defaultdict(dict)
+        self.gen_handler = {}
+        self.gen_label = {
+            CpuGen.A: 'Desktop',
+            CpuGen.B: 'Laptop',
+            CpuGen.C: 'Raspbery Pi',
+            CpuGen.D: 'M1',
+        }
+
+        i = 0
+        for nodes in nodes_dict.values():
+            cpu_gen = nodes[0].core_gen
+            G = nx.Graph()
+            G.add_nodes_from(nodes)
+            
+            nodes_pos = {}
+            for node in nodes:
+                nodes_pos[node] = (i // l, i % l)
+                i += 1
+            self.node_pos_dic[cpu_gen] = nodes_pos
+            color_map = ['#33A6CC' if c_node.activated else 'gray'
+                        for c_node in G.nodes]
+
+            ll  = nx.draw(G, ax=self._nodes_ax, pos=nodes_pos, node_size=200,
+                          node_shape=self.marker_dict[cpu_gen],
+                          node_color=color_map,
+                          label=self.gen_label[cpu_gen])
+            
+        self._nodes_ax.legend(loc='upper right', ncol=3, bbox_to_anchor=(1.1,1.15,0,0))
+
 
     def _createNodesPanel(self):
         nodes_canvas = FigureCanvas(Figure(figsize=(10, 8)))
         self.generalLayout.addWidget(nodes_canvas)
         self._nodes_ax = nodes_canvas.figure.subplots()
+        self.draw_nodes()
 
-        self._G = nx.Graph()
-        self._nodes = []
-        for c_node in self._cluster.nodes:
-            self._nodes.append(c_node)
+        
+        # nodes_dict = collections.defaultdict(list)
+
+        # for c_node in self._cluster.nodes:
+        #     nodes_dict[c_node.core_gen].append(c_node)
+        
+        # self.marker_dict = {
+        #     CpuGen.A: 'H',
+        #     CpuGen.B: 'p',
+        #     CpuGen.C: 'D',
+        #     CpuGen.D: 'o',
+        # }
+        
+        # node_size = len(self._cluster.nodes)
+        # l = int(math.sqrt(node_size) + 1)
+
+        # self.node_pos_dic = collections.defaultdict(dict)
+        # self.gen_handler = {}
+        # self.gen_label = {
+        #     CpuGen.A: 'Desktop',
+        #     CpuGen.B: 'Laptop',
+        #     CpuGen.C: 'Raspbery Pi',
+        #     CpuGen.D: 'M1',
+        # }
+
+        # i = 0
+        # for nodes in nodes_dict.values():
+        #     cpu_gen = nodes[0].core_gen
+        #     G = nx.Graph()
+        #     G.add_nodes_from(nodes)
+            
+        #     nodes_pos = {}
+        #     for node in nodes:
+        #         nodes_pos[node] = (i // l, i % l)
+        #         i += 1
+        #     self.node_pos_dic[cpu_gen] = nodes_pos
+        #     color_map = ['#33A6CC' if c_node.activated else 'gray'
+        #                 for c_node in G.nodes]
+
+        #     ll  = nx.draw(G, ax=self._nodes_ax, pos=nodes_pos, node_size=200,
+        #                   node_shape=self.marker_dict[cpu_gen],
+        #                   node_color=color_map,
+        #                   label=self.gen_label[cpu_gen])
+            
+        # self._nodes_ax.legend(loc='upper right', ncol=3, bbox_to_anchor=(1.1,1.15,0,0))
+            
+        # self._nodes_ax.legend(list(self.gen_handler.keys()), list(self.gen_handler.values()))
+
 
         # self._edges = []
         # for i in range(20):
@@ -123,28 +217,29 @@ class MagnoneUi(QtWidgets.QMainWindow):
         #     node_j = random.choice(self._nodes)
         #     if node_i != node_j:
         #         self._edges.append((node_i, node_j))
-        self._G.add_nodes_from(self._nodes)
+        # self._G.add_nodes_from(self._nodes)
         # self._G.add_edges_from(self._edges)
-        self._nodes_pos = nx.spring_layout(self._G, k=1)
-        color_map = ['#33A6CC' if c_node.activated else 'gray'
-                     for c_node in self._nodes]
-        nx.draw(self._G, ax=self._nodes_ax, pos=self._nodes_pos,
-                node_color=color_map)
+        # self._nodes_pos = nx.spring_layout(self._G, k=1)
+        # color_map = ['#33A6CC' if c_node.activated else 'gray'
+                    #  for c_node in self._G.nodes]
+        # nx.draw(self._G, ax=self._nodes_ax, pos=self._nodes_pos,
+        #         node_color=color_map, node_shape='H')
         self._nodes_timer = nodes_canvas.new_timer(900)
         self._nodes_timer.add_callback(self._updateNodesPanel)
 
     def _updateNodesPanel(self):
         self._nodes_ax.clear()
-        self._nodes = []
-        for c_node in self.cluster.nodes:
-            self._nodes.append(c_node)
-        # for _ in range(2):
-        #     random.choice(self._nodes).activated = True
-        #     random.choice(self._nodes).activated = False
-        color_map = ['#33A6CC' if c_node.activated else 'gray'
-                     for c_node in self._nodes]
-        nx.draw(self._G, pos=self._nodes_pos, ax=self._nodes_ax,
-                node_color=color_map)
+        # self._nodes = []
+        # for c_node in self.cluster.nodes:
+        #     self._nodes.append(c_node)
+        # # for _ in range(2):
+        # #     random.choice(self._nodes).activated = True
+        # #     random.choice(self._nodes).activated = False
+        # color_map = ['#33A6CC' if c_node.activated else 'gray'
+        #              for c_node in self._nodes]
+        # nx.draw(self._G, pos=self._nodes_pos, ax=self._nodes_ax,
+        #         node_color=color_map)
+        self.draw_nodes()
         self._nodes_ax.figure.canvas.draw()
 
     def set_load(self, load):

@@ -39,13 +39,18 @@ def simulate():
     #         n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
     #         cluster.add_node(n)
     #         node_id += 1
+    s0 = node_specification['desktop']
     s1 = node_specification['laptop']
     s2 = node_specification['pi']
-    for _ in range(2):
+    # for _ in range(2):
+        # n = Node(node_id=node_id, cores=s0[0], mem=s0[1], core_gen=s0[2])
+        # cluster.add_node(n)
+        # node_id += 1
+    for _ in range(6):
         n = Node(node_id=node_id, cores=s1[0], mem=s1[1], core_gen=s1[2])
         cluster.add_node(n)
         node_id += 1
-    for _ in range(6):
+    for _ in range(12):
         n = Node(node_id=node_id, cores=s2[0], mem=s2[1], core_gen=s2[2])
         cluster.add_node(n)
         node_id += 1
