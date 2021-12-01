@@ -8,6 +8,7 @@ from collections import defaultdict
 import pandas as pd
 import numpy as np
 import sys
+import random
 
 
 sys.path.append('/home/vihowe/project/MagnoneKing/')
@@ -58,8 +59,12 @@ def get_res_time(cluster: Cluster):
     res = {}
     for task in task_types:
         reverse = True if task == TaskType.A or task == TaskType.C else False
+        # reverse = False
         vs = list(task_dics[task.value].values())
         vs = sorted(vs, key=lambda x: x[-1], reverse=reverse)
+        # random.shuffle(vs)
+
+
         res[task] = vs
 
     return res

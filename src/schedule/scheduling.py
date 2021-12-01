@@ -19,7 +19,8 @@ import src.schedule.profiling as profiling
 from src.model.component import CpuGen, Node, ModelIns, Request, TaskType, Cluster
 
 
-def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Value, interval=1):
+def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Value,
+               instant_lat: multiprocessing.Queue, interval=1):
     """report the avg latency of all finished queries
     Args:
         ret_queue: get all finished request from model instances
@@ -29,22 +30,28 @@ def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Va
     avg_lat = 0.
     req_num = 0
     t_start = time.time()
-    while True:
-        req: Request
-        req = ret_queue.get()
-        if isinstance(req, Request):
-            ret_dict[req.r_id].append(req.t_end - req.t_arri)
-            if len(ret_dict[req.r_id]) == len(TaskType.__members__):
-                avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
-                avg_latency.value = avg_lat   # update the shared value
-                if time.time() - t_start >= interval:
-                    logging.info(f'finished {req_num}requests, avg latency: {avg_lat}')
-                    t_start = time.time()
-                req_num += 1
-                ret_dict.pop(req.r_id)
+    f = open('../latency_random.log', 'w+')
+    try:
+        while True:
+            req: Request
+            req = ret_queue.get()
+            if isinstance(req, Request):
+                ret_dict[req.r_id].append(req.t_end - req.t_arri)
+                if len(ret_dict[req.r_id]) == len(TaskType.__members__):
+                    avg_lat = (avg_lat * req_num + max(ret_dict[req.r_id])) / (req_num + 1)
+                    instant_lat.value = max(ret_dict[req.r_id]) 
+                    f.write(str(instant_lat.value)+'\n')
+                    avg_latency.value = avg_lat   # update the shared value
+                    if time.time() - t_start >= interval:
+                        logging.info(f'finished {req_num}requests, avg latency: {avg_lat}, instant latency: {instant_lat.value}')
+                        t_start = time.time()
+                    req_num += 1
+                    ret_dict.pop(req.r_id)
         # else:     # TODO why if this process exit, the model instance cannot receive another request
         #     logging.debug('report avg latency process exit')
         #     break
+    except Exception:
+        f.close()
 
 
 class Controller(multiprocessing.Process):
@@ -76,6 +83,7 @@ class Controller(multiprocessing.Process):
         self.ret_queue = multiprocessing.Queue()
         self._task_affinity = None
         self.avg_lat = multiprocessing.Value('d', 0.0)
+        self.instant_lat = multiprocessing.Value('d', 0.0)
 
     @property
     def slo(self):
@@ -249,14 +257,14 @@ class Controller(multiprocessing.Process):
             for k, v in self._model_insts.items():
                 for item in v:
                     logging.info(
-                        f'\t{item}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
+                        f'\t{item.name}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
 
     def report_cluster(self):
         while True:
             msg = self.recv_pipe.recv()
             if msg == 'cluster':
-                self.recv_pipe.send((self._cluster, self.avg_lat.value))
+                self.recv_pipe.send((self._cluster, self.avg_lat.value, self.instant_lat.value))
 
 
     def run(self) -> None:
@@ -278,7 +286,7 @@ class Controller(multiprocessing.Process):
         T_report_cluster.start()
 
         # start report avg latency process
-        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue, self.avg_lat), daemon=True)
+        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue, self.avg_lat, self.instant_lat), daemon=True)
         p.start()
 
         # start dispatching user queries
@@ -289,8 +297,7 @@ class Controller(multiprocessing.Process):
             else:
                 self.ret_queue.put(-1)
                 logging.debug('receieved the stop signal')
-                p.join()
-                break
+                sys.exit()
 
 
 class UserAgent(multiprocessing.Process):
@@ -318,7 +325,7 @@ class UserAgent(multiprocessing.Process):
         controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'])
         controller.start()
 
-    def querying(self, total_queries=3050):
+    def querying(self, total_queries=5000):
         """sending query request to the controller
 
         Args:
@@ -326,32 +333,55 @@ class UserAgent(multiprocessing.Process):
             total_queries: the number of all queries to be sent
         """
         r_id = 0
+        load_file = open('load.config','r')
+        self.load = int(load_file.readline()) * 3.5
+        t_tick = time.time()
         while True:
-            if r_id == total_queries:
-                self.load = 0
-                self.g_queue.put(-1)    # inform the controller to exit
-                break
+            if time.time() - t_tick > 2:
+                t_tick = time.time()
+                load = load_file.readline()
+                if load != '':
+                    self.load = int(load) * 3.5
+                else:
+                    self.load = 0
+                    break
+            # if r_id == total_queries:
+            #     self.load = 0
+            #     self.g_queue.put(-1)    # inform the controller to exit
+            #     load_file.close()
+            #     break
             req = Request(r_id, time.perf_counter(), 3)
             r_id += 1
             self.g_queue.put(req)
-            if r_id < 100:
-                self.load = random.randint(5, 10)
-            elif r_id < 1000:
-                self.load = random.randint(20, 40)
-            elif r_id < 2000:
-                self.load = random.randint(60, 80)
-            else:
-                self.load = random.randint(1, 10)
+            # if r_id < 100:
+            #     self.load = random.randint(1, 5)
+            # elif r_id < 1000:
+            #     self.load = random.randint(20, 40)
+            # elif r_id < 2000:
+            #     self.load = random.randint(60, 80)
+            # elif r_id < 2500:
+            #     self.load = random.randint(5, 50)
+            # elif r_id < 3000:
+            #     self.load = random.randint(20, 40)
+            # elif r_id < 3500:
+            #     self.loda = random.randint(10, 60)
+            # elif r_id < 4000:
+            #     self.load = random.randint(50, 90)
+            # elif r_id < 4500:
+            #     self.load = random.randint(30, 50)
+            # else:
+            #     self.load = random.randint(5, 20)
             # self.load = 1
+            # load_file.write(str(self.load)+'\n')
             time.sleep(random.expovariate(self.load))
 
     def report(self, interval=1):
         """report the current cluster status and load to view"""
         while True:
             self.send_pipe.send('cluster')
-            clu, avg_latency = self.send_pipe.recv()
+            clu, avg_latency, instant_latency = self.send_pipe.recv()
             # print(clu.nodes, self.load)
-            self.comm_pipe.send((clu, self.load, avg_latency))
+            self.comm_pipe.send((clu, self.load, avg_latency, instant_latency))
             time.sleep(interval)
 
     def run(self) -> None:
