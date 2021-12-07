@@ -1,26 +1,26 @@
+import bisect
 import collections
+import logging
+import multiprocessing
 import queue
+import random
+import sys
 import threading
 import time
-import multiprocessing
-import random
-import bisect
-import logging
-
-from typing import Tuple, Dict, List
-
-import sys
-
+from typing import Dict, List, Tuple
 
 sys.path.append('/home/vihowe/project/MagnoneKing/')
 import src.schedule.profiling as profiling
+from src.model.component import (Cluster, CpuGen, ModelIns, Node, Request,
+                                 TaskType)
 
-
-from src.model.component import CpuGen, Node, ModelIns, Request, TaskType, Cluster
+MODE = 0
+DOCKER_COLD_START = 2.856
+VM_COLD_START = 11.707
 
 
 def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Value,
-               instant_lat: multiprocessing.Queue, interval=1):
+               instant_lat: multiprocessing.Queue, mode, interval=1):
     """report the avg latency of all finished queries
     Args:
         ret_queue: get all finished request from model instances
@@ -30,7 +30,7 @@ def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Va
     avg_lat = 0.
     req_num = 0
     t_start = time.time()
-    f = open('../latency_random.log', 'w+')
+    f = open(f'../latency_{mode}.log', 'w+')
     try:
         while True:
             req: Request
@@ -50,7 +50,8 @@ def report_lat(ret_queue: multiprocessing.Queue, avg_latency: multiprocessing.Va
         # else:     # TODO why if this process exit, the model instance cannot receive another request
         #     logging.debug('report avg latency process exit')
         #     break
-    except Exception:
+    except Exception as e:
+        print(e)
         f.close()
 
 
@@ -67,23 +68,29 @@ class Controller(multiprocessing.Process):
         recv_pipe: the pipe for communicating with user agent
         send_pipe_dic: store all the communication pipe with model instances
         ret_queue: store the results from all model instance
+        launching: the number of model instance that is launching
+        mode: using container or virtual machine(0-container, 1-vm)
     """
 
     def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue,
-                 slo: float = 1):
+                 slo: float = 1, mode=0):
 
         super().__init__()
         self._cluster = cluster
         self._g_queue = g_queue
         self._model_insts = collections.defaultdict(list)
         self._slo = slo
-        self._threshold = 0.7
+        self._threshold = 1
         self.recv_pipe = recv_pipe  # receiving msg from user agent
         self.send_pipe_dic = {}  # send request to appropriate model instance
         self.ret_queue = multiprocessing.Queue()
         self._task_affinity = None
         self.avg_lat = multiprocessing.Value('d', 0.0)
         self.instant_lat = multiprocessing.Value('d', 0.0)
+        self._launching = 0
+        self._launch_lock = threading.Lock()    # the lock for checking enough resource
+        self.mode = mode
+        self.cold_start = DOCKER_COLD_START if self.mode == 0 else VM_COLD_START
 
     @property
     def slo(self):
@@ -98,11 +105,6 @@ class Controller(multiprocessing.Process):
             when the task is deployed on it, and the estimated processing time.
         """
         nodes = self._cluster.nodes
-        # for _, t_type in TaskType.__members__.items():
-        #     ordered_nodes = random.sample(nodes, k=len(nodes))
-        #     resource_cap = [(1, random.randint(20, 100), random.uniform(0.05, 0.1)) for _ in range(len(nodes))]
-        #     ret[t_type] = list(zip(ordered_nodes, resource_cap))
-        # return ret
         ret = profiling.get_res_time(self._cluster)
         rret = {}
         for k, v in ret.items():    # key: task; value: list[tuple]
@@ -116,6 +118,9 @@ class Controller(multiprocessing.Process):
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and
           owns the highest relative load in the range of agreeing with SLO
+
+          If all model instances are in a relative high load level, it needs 
+          to launch a new model instance.
 
         Args:
             t_type: the type of task to process
@@ -136,36 +141,22 @@ class Controller(multiprocessing.Process):
             return self._model_insts[t_type][r_load.index(rr[0])], True
         return self._model_insts[t_type][r_load.index(rr[a - 1])], False
 
-        # min_r = min(range(len(r_load)), key=r_load.__getitem__)
-        # if r_load[min_r] >= self._threshold * self._slo:
-        #     return None
-        # else:
-        #     return self._model_insts[min_r]
 
     def find_light_node(self, task_type: TaskType) -> Node:
-        """find an node which is affinity to `task_type` model instance and
-        owns the greatest amount of resource
+        """find an node which is affinity to `task_type` model instance 
 
         Args:
             task_type: the type of model instance
         Return:
             (Node, estimated_time): an appropriate node to bear this model instance
                 and its resource allocation and estimated processing time for running this task
-                if there are no free resource, return None
+            if there are no free resource, return None
         """
         for c_node, item in self._task_affinity[task_type]:
 
             if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
                 return (c_node, item)
         return None, None
-        # for c_node in self._cluster.nodes:
-        #     if not c_node.activated:
-        #         return c_node
-
-        # scores = [0 if c_node.free_cores <= 0 or c_node.free_mem <= 0 else (c_node.free_cores * c_node.core_gen.value
-        #           + c_node.free_mem) for c_node in self._cluster.nodes]
-        # print(scores)
-        # return self._cluster.nodes[max(range(len(scores)), key=scores.__getitem__)]
 
 
     def deploy_model_inst(self, task_type: TaskType) -> ModelIns:
@@ -180,6 +171,7 @@ class Controller(multiprocessing.Process):
         """
 
         # find an appropriate node and resource amount
+        self._launch_lock.acquire()
         c_node, resource_allo = self.find_light_node(task_type)
         if c_node is None:
             return None
@@ -192,15 +184,23 @@ class Controller(multiprocessing.Process):
 
         c_node.free_cores -= cores
         c_node.free_mem -= mem
-        c_node.activated = True
+        self._launch_lock.release()
 
+        time.sleep(self.cold_start)
+
+        self._launch_lock.acquire()
+        c_node.container_num += 1
+        c_node.activated = True
+        self._launch_lock.release()
         parent, child = multiprocessing.Pipe()
         model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child,
                               ret_queue=self.ret_queue)
+        
         model_inst.start()
 
         self.send_pipe_dic[model_inst] = parent
         self._model_insts[task_type].append(model_inst)
+        self._launching -= 1
 
         return model_inst
 
@@ -212,29 +212,34 @@ class Controller(multiprocessing.Process):
         # dispatch this request to all four types of tasks simultaneously
         for _, t_type in TaskType.__members__.items():
             a_model_inst, new_flag = self.find_model_inst(t_type)
-            if new_flag is True:  # all the model instances are under peak load
-                new_model_ins = self.deploy_model_inst(t_type)
-                if new_model_ins is not None:
-                    a_model_inst = new_model_ins
-
+            if new_flag is True and self._launching < 2:  # need to launch a new docker container
+                # using another thread to start the container
+                print(f'***************deploy new model instance')
+                self._launching += 1
+                deploy_new_t = threading.Thread(target=self.deploy_model_inst, args=(t_type,), daemon=True)
+                deploy_new_t.start()
+                # new_model_ins = self.deploy_model_inst(t_type)
+                # if new_model_ins is not None:
+                #     a_model_inst = new_model_ins
             a_model_inst.requeue.put(req)
 
-    def monitoring(self, timeout=5, interval=5):
-        """keep a lookout over all model instances, and clean model
-        instance which is idle for a while
+    def monitoring(self, timeout=20, interval=5):
+        """keep looking all model instances, and clean model
+        instance which has been idle for a while
 
         Args:
             timeout: to kill the model instance if its idle time is too long (s).
             interval: the interval (s).
         """
         while True:
-            for k, v in self._model_insts.items():
-                for model_inst in v:
+            for k in list(self._model_insts):
+                for model_inst in self._model_insts[k]:
                     if time.time() - model_inst.t_last > timeout:
                         # free resource
                         p_node = model_inst.p_node
                         p_node.free_cores += model_inst.cores
                         p_node.free_mem += model_inst.mem
+                        p_node.container_num -= 1
                         if p_node.free_cores == p_node.cores:
                             p_node.activated = False
                         # send signal to model instance for exiting
@@ -251,16 +256,18 @@ class Controller(multiprocessing.Process):
         while True:
             # a = list(self._model_insts)
             model_num = 0
-            for k, v in self._model_insts.items():
-                model_num += len(v)
+            keys = list(self._model_insts)
+            for k in keys:
+                model_num += len(self._model_insts[k])
             logging.info(f'There are {model_num} model instance serving')
-            for k, v in self._model_insts.items():
-                for item in v:
+            for k in keys:
+                for item in self._model_insts[k]:
                     logging.info(
                         f'\t{item.name}: type:{item.t_type}, p_node: {item.p_node.node_id}, avg_latency: {item.avg_latency.value}, served {item.req_num.value} requests')
             time.sleep(interval)
 
     def report_cluster(self):
+        """Report the cluster status, avg latency and instant latency to User Agent"""
         while True:
             msg = self.recv_pipe.recv()
             if msg == 'cluster':
@@ -272,10 +279,12 @@ class Controller(multiprocessing.Process):
         # and deploys one set of model instance in the cluster
         self._task_affinity = self.profile()
         for _, t_type in TaskType.__members__.items():
-            self.deploy_model_inst(t_type)
+            t = threading.Thread(target=self.deploy_model_inst, args=(t_type, ))
+            t.start()
+        t.join()
 
         # start the monitor thread
-        monitor = threading.Thread(target=self.monitoring, args=(10, 10), daemon=True)
+        monitor = threading.Thread(target=self.monitoring, args=(25, 10), daemon=True)
         monitor.start()
 
         # start the report thread
@@ -286,7 +295,7 @@ class Controller(multiprocessing.Process):
         T_report_cluster.start()
 
         # start report avg latency process
-        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue, self.avg_lat, self.instant_lat), daemon=True)
+        p = multiprocessing.Process(target=report_lat, args=(self.ret_queue, self.avg_lat, self.instant_lat, self.mode), daemon=True)
         p.start()
 
         # start dispatching user queries
@@ -307,22 +316,25 @@ class UserAgent(multiprocessing.Process):
         cluster: the cluster that processing queries
         config: some running specification
         load: the current load
+        mode: using vm or container(0-container, 1-vm)
     """
 
     def __init__(self, cluster: Cluster, comm_pipe: multiprocessing.Pipe,
-                 config: Dict = None, load=0.1):
+                 config: Dict = None, load=0.1, mode=0):
         super().__init__()
         self.comm_pipe = comm_pipe  # the pipe for communication with the view
         self.send_pipe = None   # the pipe for communication with the controller
         self.cluster = cluster
         self._run_config = config
         self.load = load
+        self.latest_rid = 0
+        self.mode = mode 
 
     def start_up(self):
         parent, child = multiprocessing.Pipe()
         self.send_pipe = parent
         self.g_queue = multiprocessing.Queue()
-        controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'])
+        controller = Controller(cluster=self.cluster, recv_pipe=child, g_queue=self.g_queue, slo=self._run_config['slo'], mode=self.mode)
         controller.start()
 
     def querying(self, total_queries=5000):
@@ -333,13 +345,14 @@ class UserAgent(multiprocessing.Process):
             total_queries: the number of all queries to be sent
         """
         r_id = 0
-        load_file = open('load.config','r')
-        self.load = int(load_file.readline()) * 3
+        # load_file = open('load.config','r')
+        # self.load = int(load_file.readline()) * 3
+        self.load = 10
         t_tick = time.time()
-        load = [30, 60, 90]
+        load = [40, 120, 80, 0]
         load_i = 0
         while True:
-            if time.time() - t_tick > 10:
+            if time.time() - t_tick > 30:
                 t_tick = time.time()
                 # load = load_file.readline()
                 # if load != '':
@@ -348,24 +361,29 @@ class UserAgent(multiprocessing.Process):
                 #     self.load = 0
                 #     break
                 self.load = load[load_i]
-                load_i += 1
+                load_i += 1 if load_i < 3 else 0 
             req = Request(r_id, time.perf_counter(), 1)
-            r_id += 1
             self.g_queue.put(req)
+            self.latest_rid = req.r_id
+            r_id += 1
 
             time.sleep(random.expovariate(self.load))
 
     def report(self, interval=1):
-        """report the current cluster status and load to view"""
+        """report the current cluster status, load, avg_latency and instant_latency to view"""
+        start = 0
         while True:
             self.send_pipe.send('cluster')
             clu, avg_latency, instant_latency = self.send_pipe.recv()
             # print(clu.nodes, self.load)
-            self.comm_pipe.send((clu, self.load, avg_latency, instant_latency))
+            latest_rid = self.latest_rid
+            self.comm_pipe.send((clu, latest_rid-start, avg_latency, instant_latency))
+            start = latest_rid
             time.sleep(interval)
 
     def run(self) -> None:
         self.start_up()
+        time.sleep(20)
         T = threading.Thread(target=self.report, args=(1, ))
         T.start()
         self.querying()

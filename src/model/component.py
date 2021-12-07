@@ -94,6 +94,7 @@ class Node(object):
         _mem: An integer indicating the memory size of this node.
         _core_gen: An integer indicating the generation of the cpu core.
         _activated: A boolean indicating whether this node is scheduled
+        _container_num: The number of containers lied on this node
     """
 
     def __init__(self, node_id=1, cores: int = 1, mem: int = 1000, core_gen: CpuGen = CpuGen.A,
@@ -106,7 +107,8 @@ class Node(object):
         self._free_mem = mem
         self._core_gen = core_gen
         self._activated = activated
-
+        self._container_num = 0
+    
     @property
     def core_gen(self):
         return self._core_gen
@@ -139,9 +141,6 @@ class Node(object):
     def activated(self, value):
         self._activated = value
 
-    def __repr__(self):
-        return f"Node('{self.node_id}', {self.free_cores}, {self.free_mem}, {self._core_gen}, {self.activated})"
-
     @free_cores.setter
     def free_cores(self, value):
         self._free_cores = value
@@ -149,6 +148,18 @@ class Node(object):
     @free_mem.setter
     def free_mem(self, value):
         self._free_mem = value
+    
+    @property
+    def container_num(self):
+        return self._container_num
+    
+    @container_num.setter
+    def container_num(self, value):
+        self._container_num = value;
+
+    def __repr__(self):
+        return f"Node('{self.node_id}', {self.free_cores}, {self.free_mem}, {self._core_gen}, {self.activated})"
+
 
 
 class Cluster(object):

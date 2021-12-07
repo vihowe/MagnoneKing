@@ -1,14 +1,17 @@
 #!/home/vihowe/anaconda3/bin/python
+"""Profile each location task's performance in term of the cpu and memory share
+
+"""
 import numpy as np
 import subprocess
 import csv
 import time
 
 if __name__ == '__main__':
-    cpu_quotas = np.arange(20000, 220000, 20000)
-    mem_quotas = np.arange(40, 240, 20)
+    cpu_quotas = np.arange(5000, 120000, 20000)
+    mem_quotas = np.arange(30, 150, 30)
     task_type = [0, 1, 2, 3]
-    with open('data/1.csv', 'w+') as f:
+    with open('data/2_2.csv', 'w+') as f:
         csv_writer = csv.writer(f)
         csv_writer.writerow(
             ['task', 'cpu_quota', 'mem_quota', 'running time', 'overhead'])
@@ -22,7 +25,7 @@ if __name__ == '__main__':
                     s = subprocess.Popen([
                         'docker', 'run', '--rm', f'--cpu-period=100000',
                         f'--cpu-quota={cpu_quota}', '-m', f'{mem_quota}M',
-                        '--memory-swap', '-1', 'ciyichang', 'python',
+                        '--memory-swap', '-1', 'vihowe/ciyichang:x86', 'python',
                         'main_plain_dipolev5_20m_nocali.py', '--task',
                         f'{task}'
                     ],

@@ -55,6 +55,7 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._createLoadPanel()
         self._createNodesPanel()
         self._avg_latency = 0.0
+        self._instant_latency = 0.0
 
     @property
     def cluster(self):
@@ -141,9 +142,9 @@ class MagnoneUi(QtWidgets.QMainWindow):
             G.add_nodes_from(nodes)
             
             nodes_pos = {}
-            cpu_utilization = {}
+            container_nums = {}
             for node in nodes:
-                cpu_utilization[node] = (node.cores - node.free_cores) / node.cores
+                container_nums[node] = node.container_num
                 nodes_pos[node] = (i // l, i % l)
                 i += 1
             self.node_pos_dic[cpu_gen] = nodes_pos
@@ -151,9 +152,9 @@ class MagnoneUi(QtWidgets.QMainWindow):
                         for c_node in G.nodes]
 
             nx.draw(G, ax=self._nodes_ax,
-                    # labels = cpu_utilization,
-                    # with_labels = True,
-                    pos=nodes_pos, node_size=100,
+                    labels = container_nums,
+                    with_labels = True,
+                    pos=nodes_pos, node_size=200,
                     node_shape=self.marker_dict[cpu_gen],
                     node_color=color_map,
                     label=self.gen_label[cpu_gen])

@@ -12,6 +12,7 @@ from src.model.component import CpuGen, Node
 from src.schedule.scheduling import Cluster, UserAgent
 
 import logging
+import argparse
 
 
 def update(win, p0):
@@ -24,7 +25,7 @@ def update(win, p0):
         win.set_instant_latency(instant_latency)
 
 
-def simulate():
+def simulate(mode):
     app = QtWidgets.QApplication([])
 
     cluster = Cluster()
@@ -75,7 +76,7 @@ def simulate():
     # view needs to communicate with the user agent to get the status of the cluster and current load
 
     # user agent need to report the load and cluster status to the view
-    user_agent = UserAgent(cluster, comm_pipe=p1, config=config)
+    user_agent = UserAgent(cluster, comm_pipe=p1, config=config, mode=mode)
     
     user_agent.start()
 
@@ -87,6 +88,13 @@ def simulate():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--vm',
+        action='store_true',
+        help='whether using virtual machine'
+    )
+    args = parser.parse_args()
     multiprocessing.set_start_method('fork')
     logging.basicConfig(level=logging.INFO)
-    simulate()
+    simulate(1 if args.vm == True else 0)
