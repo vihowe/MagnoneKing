@@ -100,12 +100,12 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._load_ax.cla()
         x = np.linspace(0, 100, 100)
         self._cur_load.append(self._load)
-        y_max = max(100, self._load * 2)
+        y_max = 200
         self._load_ax.set_ylim(0, y_max)
         self._load_ax.set_xlim(0, 100)
         # self._load_line.set_data(x, self._cur_load)
         self._load_ax.plot(x, self._cur_load)
-        self._load_ax.set_title(f'avg latency: {self._avg_latency:.3f}, instant latency: {self._instant_latency:.3f}')
+        self._load_ax.set_title(f'avg latency: {self._avg_latency:.3f}s, instant latency: {self._instant_latency:.3f}s')
         self._load_line.figure.canvas.draw()
     
     

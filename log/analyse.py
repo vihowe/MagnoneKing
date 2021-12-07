@@ -22,6 +22,14 @@ min_d = min(len(y1), len(y2), len(y3))
 y1 = y1[:min_d]
 y2 = y2[:min_d]
 y3 = y3[:min_d]
+y1 = sorted(y1)
+y2 = sorted(y2)
+y3 = sorted(y3)
+
+print(np.mean(y1), np.mean(y2), np.mean(y3))
+print(y1[int(0.90*min_d)],y2[int(0.90*min_d)], y3[int(0.90*min_d)])
+
+#%%
 x = np.arange(0, min_d)
 ax.plot(x[::40], y1[::40], label='affinity',linewidth=1.5)
 ax.plot(x[::40], y2[::40], label='naive', linewidth=0.8)

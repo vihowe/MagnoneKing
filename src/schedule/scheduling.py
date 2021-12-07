@@ -334,45 +334,25 @@ class UserAgent(multiprocessing.Process):
         """
         r_id = 0
         load_file = open('load.config','r')
-        self.load = int(load_file.readline()) * 3.5
+        self.load = int(load_file.readline()) * 3
         t_tick = time.time()
+        load = [30, 60, 90]
+        load_i = 0
         while True:
-            if time.time() - t_tick > 2:
+            if time.time() - t_tick > 10:
                 t_tick = time.time()
-                load = load_file.readline()
-                if load != '':
-                    self.load = int(load) * 3.5
-                else:
-                    self.load = 0
-                    break
-            # if r_id == total_queries:
-            #     self.load = 0
-            #     self.g_queue.put(-1)    # inform the controller to exit
-            #     load_file.close()
-            #     break
-            req = Request(r_id, time.perf_counter(), 3)
+                # load = load_file.readline()
+                # if load != '':
+                #     self.load = int(load) * 3
+                # else:
+                #     self.load = 0
+                #     break
+                self.load = load[load_i]
+                load_i += 1
+            req = Request(r_id, time.perf_counter(), 1)
             r_id += 1
             self.g_queue.put(req)
-            # if r_id < 100:
-            #     self.load = random.randint(1, 5)
-            # elif r_id < 1000:
-            #     self.load = random.randint(20, 40)
-            # elif r_id < 2000:
-            #     self.load = random.randint(60, 80)
-            # elif r_id < 2500:
-            #     self.load = random.randint(5, 50)
-            # elif r_id < 3000:
-            #     self.load = random.randint(20, 40)
-            # elif r_id < 3500:
-            #     self.loda = random.randint(10, 60)
-            # elif r_id < 4000:
-            #     self.load = random.randint(50, 90)
-            # elif r_id < 4500:
-            #     self.load = random.randint(30, 50)
-            # else:
-            #     self.load = random.randint(5, 20)
-            # self.load = 1
-            # load_file.write(str(self.load)+'\n')
+
             time.sleep(random.expovariate(self.load))
 
     def report(self, interval=1):

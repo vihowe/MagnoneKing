@@ -9,7 +9,15 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 class Request(object):
-    """magnetic detection request"""
+    """magnetic detection request
+    
+    
+    Attributes:
+        r_id: the request's id
+        t_arri: the time stamp of sending request
+        t_slo: the SLO of this request
+        t_end: the finish time stamp of this request
+    """
 
     def __init__(self, r_id, t_arri: float = 0, t_slo: float = 0, t_end=-1):
         self._r_id = r_id
