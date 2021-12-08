@@ -8,7 +8,7 @@ import csv
 import time
 
 if __name__ == '__main__':
-    cpu_quotas = np.arange(5000, 120000, 20000)
+    cpu_quotas = np.arange(10000, 110000, 10000)
     mem_quotas = np.arange(30, 150, 30)
     task_type = [0, 1, 2, 3]
     with open('data/2_2.csv', 'w+') as f:

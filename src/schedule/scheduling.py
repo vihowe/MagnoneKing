@@ -59,7 +59,7 @@ class Controller(multiprocessing.Process):
     """The controller for load balancing and auto scaling
 
     Attributes:
-        _cluster: the cluster that the controller is in charge
+        _cluster: the cluster that the controller is in charge, a list of nodes
         _g_queue: the queue for storing all user queries
         _model_insts: a dict storing all kinds of model instances.
             _model_insts[task_type] = List[model_instance]
@@ -70,6 +70,8 @@ class Controller(multiprocessing.Process):
         ret_queue: store the results from all model instance
         launching: the number of model instance that is launching
         mode: using container or virtual machine(0-container, 1-vm)
+        t1: the running time for long task when deployed on a strong core
+        t2: the running time for long task when deployed on a weak core
     """
 
     def __init__(self, cluster: Cluster, recv_pipe: multiprocessing.Pipe, g_queue: multiprocessing.Queue,
@@ -91,6 +93,11 @@ class Controller(multiprocessing.Process):
         self._launch_lock = threading.Lock()    # the lock for checking enough resource
         self.mode = mode
         self.cold_start = DOCKER_COLD_START if self.mode == 0 else VM_COLD_START
+        self.t1 = 100
+        self.t2 = 500
+
+        self.profile_cluster()
+
 
     @property
     def slo(self):
@@ -107,13 +114,37 @@ class Controller(multiprocessing.Process):
         nodes = self._cluster.nodes
         ret = profiling.get_res_time(self._cluster)
         rret = {}
-        for k, v in ret.items():    # key: task; value: list[tuple]
+        for k, v in ret.items():    # key: task; value: list[tuple(cpu_share, mem_share, estimated_time)]
             r = []
             for item in v:
                 r.append((nodes[item[0]-1], item[1:]))
             rret[k] = r
+        self.t1 = min(rret[TaskType.B][0][-1][-1], rret[TaskType.D][0][-1][-1])
+        self.t2 = min(rret[TaskType.B][-1][-1][-1], rret[TaskType.D][-1][-1][-1])
         return rret
 
+    def profile_cluster(self):
+        """Have a perception of the structure of this cluster
+        return the probability `p` of assigning the long job to a strong core 
+
+        So the controller will assign less resource to make the short job
+        running about the same time as a long job on a strong core 
+        with probability `p` and the same time as a long job on a weak core with probability `1-p`
+
+        Return:
+            p: the probability of assigning a long job to a strong core
+        """
+        total_core = 0
+        strong_core = 0
+        for node in self._cluster.nodes:
+            if node.core_gen == CpuGen.A or node.core_gen == CpuGen.B:
+                total_core += node.cores
+                strong_core += node.cores
+            else:
+                total_core += node.cores
+        
+        p = strong_core * 4 / total_core
+        self._strong_p = p if p < 1 else 1
 
     def find_model_inst(self, t_type: TaskType) -> ModelIns or None:
         """find the model instance which is responsible for `t_type` task and
@@ -141,18 +172,38 @@ class Controller(multiprocessing.Process):
             return self._model_insts[t_type][r_load.index(rr[0])], True
         return self._model_insts[t_type][r_load.index(rr[a - 1])], False
 
+    def balance_task(self, cpu_gen: CpuGen, task_type: TaskType):
+        """slice the resource further to prolong the running time of short task 
+
+        Args:
+            cpu_gen: the generation of cpu for handling this task
+            task_type: task A or task C
+            t1: the expected running time of this short task(similar to long job running on a strong core)
+            t2: the expected running time of this short task(similar to long job running on a weak core)
+        
+        Return:
+            [(cpu_share, mem_share, estimated_time similar to long job running on strong core), (cpu_share, mem_share, estimated_time similar to long job running on weak core)
+        """
+
 
     def find_light_node(self, task_type: TaskType) -> Node:
         """find an node which is affinity to `task_type` model instance 
+        slice its cpu again to prolong its running time if its taskA or taskC
 
         Args:
             task_type: the type of model instance
         Return:
-            (Node, estimated_time): an appropriate node to bear this model instance
+            (Node, estimated_rs_time): an appropriate node to bear this model instance
                 and its resource allocation and estimated processing time for running this task
             if there are no free resource, return None
         """
         for c_node, item in self._task_affinity[task_type]:
+            cpu_gen = c_node.core_gen
+            cpu_share = item[0]
+            cpu_mem = item[1]
+            estimated_time = item[2]
+            if task_type == TaskType.A or task_type == TaskType.C:
+                p1, p2 = self.balance_task(cpu_gen, task_type)
 
             if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
                 return (c_node, item)

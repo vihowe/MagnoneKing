@@ -71,7 +71,12 @@ class Request(object):
 
 
 class CpuGen(Enum):
-    """four types of processing node"""
+    """four types of processing node
+        A: desktop
+        B: laptop
+        C: raspberry pi
+        D: m1
+    """
     A = 1
     B = 2
     C = 3
@@ -79,7 +84,12 @@ class CpuGen(Enum):
 
 
 class TaskType(Enum):
-    """four types of tasks"""
+    """four types of tasks
+        A: ISTAR
+        B: A-ISTAR
+        C: NN_ISTAR
+        D: A-NN_ISTAR
+    """
     A = 0
     B = 1
     C = 2
@@ -91,7 +101,7 @@ class Node(object):
 
     Attributes:
         _cores: An integer count of the cpu cores in this node.
-        _mem: An integer indicating the memory size of this node.
+        _mem: An integer indicating the memory size(MB) of this node.
         _core_gen: An integer indicating the generation of the cpu core.
         _activated: A boolean indicating whether this node is scheduled
         _container_num: The number of containers lied on this node
