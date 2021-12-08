@@ -2,6 +2,8 @@ import bisect
 import collections
 import logging
 import multiprocessing
+import os
+import pandas as pd
 import queue
 import random
 import sys
@@ -173,37 +175,58 @@ class Controller(multiprocessing.Process):
         return self._model_insts[t_type][r_load.index(rr[a - 1])], False
 
     def balance_task(self, cpu_gen: CpuGen, task_type: TaskType):
-        """slice the resource further to prolong the running time of short task 
+        """slice the resource on `cpu_gen` further to prolong the running time 
+        of short task `task_type`
 
         Args:
             cpu_gen: the generation of cpu for handling this task
             task_type: task A or task C
             t1: the expected running time of this short task(similar to long job running on a strong core)
             t2: the expected running time of this short task(similar to long job running on a weak core)
+            t2 must be greater than t1
         
         Return:
-            [(cpu_share, mem_share, estimated_time similar to long job running on strong core), (cpu_share, mem_share, estimated_time similar to long job running on weak core)
+            (cpu_share, mem_share, estimated_time similar to long job running on strong core), (cpu_share, mem_share, estimated_time similar to long job running on weak core)
         """
+        df = pd.read_csv(os.path.join('data', f'{cpu_gen.value}.csv'), header=None)
+        df = df[df['task'] == task_type.value]
+        p1 = None
+        p2 = None
+        for row in df.iterrows():
+            running_time = row[1]['running time']
+            if running_time < self.t2 * 1.2 and p2 is None:
+                p2 = (row[1]['cpu_quota'], 100, running_time)
+                continue
+            if running_time < self.t1 * 1.2 and p1 is None:
+                p1 = (row[1]['cpu_quota'], 100, running_time)
+                break
+        return p1, p2
+            
 
 
-    def find_light_node(self, task_type: TaskType) -> Node:
-        """find an node which is affinity to `task_type` model instance 
+    def find_light_node(self, task_type: TaskType, mode) -> Node:
+        """find an node which is affinity to `task_type` model instance;
         slice its cpu again to prolong its running time if its taskA or taskC
 
         Args:
             task_type: the type of model instance
+            mode: if slice the cpu further(0-do not slice, 1-slice)
         Return:
             (Node, estimated_rs_time): an appropriate node to bear this model instance
                 and its resource allocation and estimated processing time for running this task
             if there are no free resource, return None
         """
         for c_node, item in self._task_affinity[task_type]:
-            cpu_gen = c_node.core_gen
-            cpu_share = item[0]
-            cpu_mem = item[1]
-            estimated_time = item[2]
-            if task_type == TaskType.A or task_type == TaskType.C:
-                p1, p2 = self.balance_task(cpu_gen, task_type)
+
+            if mode == 1:
+                cpu_gen = c_node.core_gen
+
+                if task_type == TaskType.A or task_type == TaskType.C:
+                    p1, p2 = self.balance_task(cpu_gen, task_type)
+                    assert p1 is not None
+                    assert p2 is not None
+                
+                item = random.choices([p1, p2], weights=[self._strong_p, 1-self._strong_p])
 
             if c_node.free_cores >= item[0] and c_node.free_mem >= item[1]:
                 return (c_node, item)
@@ -243,6 +266,8 @@ class Controller(multiprocessing.Process):
         c_node.container_num += 1
         c_node.activated = True
         self._launch_lock.release()
+
+        # start and register this model instance
         parent, child = multiprocessing.Pipe()
         model_inst = ModelIns(t_type=task_type, p_node=c_node, cores=cores, mem=mem, t_cost=cap, recv_pipe=child,
                               ret_queue=self.ret_queue)
