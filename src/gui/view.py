@@ -14,8 +14,10 @@ import PyQt5.QtGui as QtGui
 import random
 import collections
 import math
+import matplotlib.patches as mpatches
 
 from matplotlib.backends.qt_compat import QtCore, QtWidgets
+from matplotlib.collections import PatchCollection
 
 from src.model.component import CpuGen, Node
 from src.schedule.scheduling import Cluster
@@ -165,13 +167,74 @@ class MagnoneUi(QtWidgets.QMainWindow):
         self._nodes_ax.text(0.4, 4.6, 'active', bbox=dict(facecolor='#33A6CC', alpha=0.5))
         self._nodes_ax.text(0, 4.6, 'idle', bbox=dict(facecolor='gray', alpha=0.5))
 
+    
+    def draw_nodes2(self):
+        nodes_dict = collections.defaultdict(list)
+
+        for c_node in self._cluster.nodes:
+            nodes_dict[c_node.core_gen].append(c_node)
+        
+        self.marker_dict = {
+            CpuGen.A: 'H',
+            CpuGen.B: 'p',
+            CpuGen.C: 'D',
+            CpuGen.D: 'o',
+        }
+        
+        node_size = len(self._cluster.nodes)
+        rows = 0
+        items_per_row = 5
+        for key, value in nodes_dict.items():
+            rows += math.ceil(len(value) / items_per_row)   # each row contains at most 5 nodes
+        items_per_col = rows
+        
+        l = int(math.sqrt(node_size) + 1)
+
+        self.node_pos_dic = collections.defaultdict(dict)
+        self.gen_handler = {}
+        self.gen_label = {
+            CpuGen.A: 'Desktop',
+            CpuGen.B: 'Laptop',
+            CpuGen.C: 'Raspbery Pi',
+            CpuGen.D: 'M1',
+        }
+
+        rows = complex(0, rows)
+        grid = np.mgrid[0.1:0.9:5j, 0.9:0.1:rows].reshape(2,-1).T
+        print(grid)
+        patches = []
+        
+        big_width = 0.16
+        margin = 0.003
+        height = 0.06
+        row_idx = -1 
+        for key, value in nodes_dict.items():
+            row_idx += 1    # diffenrent kind of cpu will start in a new row
+            col_idx = 0
+            for c_id, c_node in enumerate(value):
+                base_anchor = grid[col_idx * items_per_col + row_idx] - [0.08, 0.05]
+                print(c_node, row_idx, col_idx)
+                patches.append(mpatches.Rectangle(base_anchor, big_width, height, ec='b', facecolor='none'))
+
+                small_width = (big_width - margin * (c_node.cores - 1)) / c_node.cores
+                for i in range(c_node.container_num):
+                    patches.append(mpatches.Rectangle(
+                        (base_anchor[0] + i * (small_width + margin), base_anchor[1]), small_width, height, fc='r', alpha=0.6
+                    ))
+                col_idx += 1
+                if col_idx >= 5 and c_id < len(value) - 1:
+                    row_idx += 1
+                    col_idx = 0
+        
+        collection = PatchCollection(patches, match_original=True)
+        self._nodes_ax.add_collection(collection)
 
 
     def _createNodesPanel(self):
         nodes_canvas = FigureCanvas(Figure(figsize=(10, 8)))
         self.generalLayout.addWidget(nodes_canvas)
         self._nodes_ax = nodes_canvas.figure.subplots()
-        self.draw_nodes()
+        self.draw_nodes2()
 
 
         # self._edges = []
@@ -202,7 +265,7 @@ class MagnoneUi(QtWidgets.QMainWindow):
         #              for c_node in self._nodes]
         # nx.draw(self._G, pos=self._nodes_pos, ax=self._nodes_ax,
         #         node_color=color_map)
-        self.draw_nodes()
+        self.draw_nodes2()
         self._nodes_ax.figure.canvas.draw()
 
     def set_load(self, load):
@@ -219,20 +282,14 @@ class MagnoneUi(QtWidgets.QMainWindow):
 
     def dynamic_load(self):
         while True:
-            self.set_load(random.randint(1, 10))
+            self.set_load(random.randint(1, 100))
             time.sleep(1)
     
     def dynamic_node(self):
         while True:
-            cluster = Cluster()
             for c_node in self.cluster.nodes:
-                r = random.randint(0, 1)
-                if r == 1:
-                    c_node.activated = True
-                else:
-                    c_node.activated = False
-                cluster.add_node(c_node)
-            self.set_cluster(cluster)
+                r = random.randint(0, c_node.cores)
+                c_node.container_num = r
             time.sleep(1)
 
     # def setNodePanelPic(self, pic: str):
@@ -331,13 +388,19 @@ if __name__ == '__main__':
         "phone": (8, 2048, CpuGen.B,),
         "pi": (4, 2048, CpuGen.A,),
     }
+    dd = {
+        0: 2,
+        1: 4,
+        2: 5,
+        3: 9
+    }
     node_id = 1
-    for v in node_specification.values():
-        for _ in range(1):
+    for idx, v in enumerate(node_specification.values()):
+        for _ in range(dd[idx]):
             n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
             cluster.add_node(n)
             node_id += 1
-    win = MagnoneUi(cluster=cluster, comm_pipe=None)
+    win = MagnoneUi(cluster=cluster, comm_pipe=None, mode=0)
     win.show()
     magnoneCtrl = MagnoneCtrl(view=win)
 
