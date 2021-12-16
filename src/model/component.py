@@ -4,6 +4,8 @@ from enum import Enum
 import time
 from typing import MutableMapping
 import logging
+import os
+import sys
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -170,8 +172,6 @@ class Node(object):
     def __repr__(self):
         return f"Node('{self.node_id}', {self.free_cores}, {self.free_mem}, {self._core_gen}, {self.activated})"
 
-
-
 class Cluster(object):
     def __init__(self):
         self._nodes = []
@@ -196,7 +196,7 @@ class ModelIns(multiprocessing.Process):
         _cores: the cores possessed by the model instance
         _mem: the size of memory possessed by the model instance
         _t_cost: the instance's capability to process one query
-            processing time per query
+            processing time per query(ms)
         recv_pipe: the pipe for receiving msg from the controller
         _t_last: the time stamp when it process one query last time
         _pri_queue: the priority queue for EDL scheduling

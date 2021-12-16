@@ -36,15 +36,17 @@ class MagnoneUi(QtWidgets.QMainWindow):
     Attributes:
         _cluster: the cluster consists of nodes its is responsible to show
         comm_pipe: the communication pipe with the user agent
+        mode: using container or virtual machine (0-container, 1-vm)
     """
 
-    def __init__(self, cluster: Cluster, comm_pipe: multiprocessing.Pipe):
+    def __init__(self, cluster: Cluster, comm_pipe: multiprocessing.Pipe, mode):
         """View initializer"""
+        s_mode = '虚拟机' if mode == 1 else '容器'
         super(MagnoneUi, self).__init__()
         self._load = 0.1
         self._cluster = cluster
         self.comm_pipe = comm_pipe
-        self.setWindowTitle('磁探测')
+        self.setWindowTitle(f'磁探测--{s_mode}')
         self.setFixedSize(800, 800)
         self._centralWidget = QtWidgets.QWidget(self)
         self.setCentralWidget(self._centralWidget)

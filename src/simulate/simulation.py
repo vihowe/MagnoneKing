@@ -16,6 +16,12 @@ import argparse
 
 
 def update(win, p0):
+    """Read metrics from user agent, update the stats in app's view according to thes metrics
+    
+    Args:
+        win: the app's view
+        p0: the pipe connected with the user agent
+    """
     while True:
         cluster, load, avg_latency, instant_latency = p0.recv()
         # logging.info(f'cluster:{cluster}, load: {load}, avg_latency: {avg_latency}, instant latency: {instant_latency}')
@@ -36,18 +42,11 @@ def simulate(mode):
         "pi": (2, 2048, CpuGen.C,),
     }
     node_id = 1
-    # for v in node_specification.values():
-    #     for _ in range(2):
-    #         n = Node(node_id=node_id, cores=v[0], mem=v[1], core_gen=v[2])
-    #         cluster.add_node(n)
-    #         node_id += 1
+
     s0 = node_specification['desktop']
     s1 = node_specification['laptop']
     s2 = node_specification['pi']
-    # for _ in range(2):
-        # n = Node(node_id=node_id, cores=s0[0], mem=s0[1], core_gen=s0[2])
-        # cluster.add_node(n)
-        # node_id += 1
+
     for _ in range(2):
         n = Node(node_id=node_id, cores=s0[0], mem=s0[1], core_gen=s0[2])
         cluster.add_node(n)
@@ -69,7 +68,7 @@ def simulate(mode):
 
 
     p0, p1 = multiprocessing.Pipe()
-    win = MagnoneUi(cluster=cluster, comm_pipe=p0)
+    win = MagnoneUi(cluster=cluster, comm_pipe=p0, mode=mode)
     win.show()
     magnoneCtrl = MagnoneCtrl(view=win)
 
@@ -80,7 +79,7 @@ def simulate(mode):
     
     user_agent.start()
 
-    T = threading.Thread(target=update, args=(win, p0))
+    T = threading.Thread(target=update, args=(win, p0), daemon=True)
     T.start()
     
     sys.exit(app.exec())
